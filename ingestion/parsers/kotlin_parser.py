@@ -285,24 +285,24 @@ class KotlinParser(BaseParser):
                 i += 1
                 continue
 
-            # ── class-level val / var property ────────────────────────────────
-            if current_type:
+            # ── class-level val / var property with accessor block ───────────
+            # Only extract properties that have an explicit { ... } accessor
+            # body (custom get/set).  Simple `val x = 5` assignments are skipped.
+            if current_type and "{" in stripped:
                 prop_match = _PROPERTY_RE.match(stripped)
                 if prop_match:
                     name     = prop_match.group(1)
                     end_line = self._find_block_end(raw_lines, lineno)
-                    # Only keep if it has a getter/setter body (multi-line)
-                    if end_line > lineno:
-                        decorators = list(pending_annotations)
-                        symbols.append(ParsedSymbol(
-                            symbol_type = "method",
-                            name        = name,
-                            start_line  = lineno,
-                            end_line    = end_line,
-                            source      = "\n".join(raw_lines[lineno - 1:end_line]),
-                            parent_name = current_type,
-                            decorators  = decorators,
-                        ))
+                    decorators = list(pending_annotations)
+                    symbols.append(ParsedSymbol(
+                        symbol_type = "method",
+                        name        = name,
+                        start_line  = lineno,
+                        end_line    = end_line,
+                        source      = "\n".join(raw_lines[lineno - 1:end_line]),
+                        parent_name = current_type,
+                        decorators  = decorators,
+                    ))
                     pending_annotations = []
                     i += 1
                     continue
