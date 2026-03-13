@@ -1,0 +1,18 @@
+# ── Core ──────────────────────────────────────────────────────────────────────
+gitpython>=3.1
+
+# ── Embeddings (choose one backend) ──────────────────────────────────────────
+# Default: Voyage AI — best-in-class for code, 200M token free tier
+voyageai>=0.2
+
+# Alternative: OpenAI
+# openai>=1.0
+
+# ── LLM (Step 1h summaries + Stage 3 review) ─────────────────────────────────
+anthropic>=0.28
+
+# ── Vector store (Step 1k) ────────────────────────────────────────────────────
+qdrant-client>=1.9
+
+# ── Dependency graph (Step 1j) ────────────────────────────────────────────────
+networkx>=3.3
