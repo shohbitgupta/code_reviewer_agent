@@ -38,12 +38,29 @@ logger = logging.getLogger(__name__)
 # Maps language name (from LanguageDetector) → parser class
 # Add new languages here — no other file needs to change.
 
+# Try tree-sitter parsers; fall back to regex if grammar unavailable
+try:
+    from ingestion.parsers.kotlin_ts_parser import KotlinTSParser
+    _kotlin_parser: Type[BaseParser] = KotlinTSParser
+    if not KotlinTSParser._make_parser():
+        from ingestion.parsers.kotlin_parser import KotlinParser as _kotlin_parser  # noqa: F811
+except Exception:
+    from ingestion.parsers.kotlin_parser import KotlinParser as _kotlin_parser  # noqa: F811
+
+try:
+    from ingestion.parsers.rust_ts_parser import RustTSParser
+    _rust_parser: Type[BaseParser] = RustTSParser
+    if not RustTSParser._make_parser():
+        from ingestion.parsers.rust_parser import RustParser as _rust_parser  # noqa: F811
+except Exception:
+    from ingestion.parsers.rust_parser import RustParser as _rust_parser  # noqa: F811
+
 REGISTRY: Dict[str, Type[BaseParser]] = {
-    "python":     PythonParser,
-    "swift":      SwiftParser,
-    "rust":       RustParser,
-    "dart":       DartParser,
-    "kotlin":     KotlinParser,
+    "python": PythonParser,
+    "swift":  SwiftParser,
+    "rust":   _rust_parser,
+    "dart":   DartParser,
+    "kotlin": _kotlin_parser,
 }
 
 # Instantiated parsers — one instance per language (stateless, safe to reuse)

@@ -111,9 +111,16 @@ class HierarchicalChunkBuilder:
         self,
         parsed_files: List[ParsedFile],
         jsonl_path: Optional[Path] = None,
+        analysis_result=None,
     ) -> List[CodeChunk]:
         """
         Chunk all files and optionally persist to a JSONL file.
+
+        Args:
+            parsed_files:    Output of Step 1f.
+            jsonl_path:      Optional path to write chunks.jsonl.
+            analysis_result: Optional AnalysisResult from Step 1f-LA.
+                             When provided, assigns layer tags to chunks.
 
         Returns:
             Flat list of all CodeChunk objects across all files.
@@ -121,6 +128,12 @@ class HierarchicalChunkBuilder:
         all_chunks: List[CodeChunk] = []
         for pf in parsed_files:
             all_chunks.extend(self.chunk_file(pf))
+
+        # Assign layer tags from AnalysisResult when available
+        if analysis_result:
+            for chunk in all_chunks:
+                layer = analysis_result.layer_map.get(chunk.file_path, "unknown")
+                chunk.layer = layer
 
         if jsonl_path:
             jsonl_path.parent.mkdir(parents=True, exist_ok=True)

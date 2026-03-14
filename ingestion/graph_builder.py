@@ -28,6 +28,7 @@ Usage:
 
 import json
 import logging
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -90,6 +91,7 @@ class DependencyGraph:
                 "language":    chunk.language,
                 "start_line":  chunk.start_line,
                 "end_line":    chunk.end_line,
+                "layer":       chunk.layer,
             }
             self.graph.add_node(chunk.chunk_id, **meta)
             self._chunk_meta[chunk.chunk_id] = meta
@@ -106,6 +108,7 @@ class DependencyGraph:
                 to_file         = edge.to_file,
                 is_cross_file   = edge.is_cross_file,
                 is_cross_domain = edge.is_cross_domain,
+                is_external     = edge.is_external,
                 weight          = edge.weight,
             )
 
@@ -188,23 +191,48 @@ class DependencyGraph:
 
     def find_layer_violations(self) -> List[Dict]:
         """
-        Find cross-domain CALLS edges (controller → db layer etc.).
+        Find CALLS edges where the caller is in the "presentation" layer and
+        the callee is in the "data" layer, skipping the "domain" layer.
+
+        Falls back to checking is_cross_domain when layer attributes are not
+        available (backward compat with graphs built without layer info).
 
         Maps to ReviewIssue rule_violated="ARCH002".
         """
         violations = []
         for u, v, data in self.graph.edges(data=True):
-            if (
-                data.get("is_cross_domain")
-                and data.get("edge_type") == "CALLS"
-            ):
+            if data.get("edge_type") != "CALLS":
+                continue
+
+            from_node_data = self.graph.nodes.get(u, {})
+            to_node_data   = self.graph.nodes.get(v, {})
+
+            from_layer = from_node_data.get("layer", "unknown")
+            to_layer   = to_node_data.get("layer", "unknown")
+
+            # Layer-aware check: presentation → data (skipping domain)
+            is_layer_violation = (
+                from_layer == "presentation" and to_layer == "data"
+            )
+
+            # Fallback: cross-domain check (original heuristic)
+            is_cross_domain_violation = (
+                from_layer == "unknown"
+                and to_layer == "unknown"
+                and data.get("is_cross_domain", False)
+            )
+
+            if is_layer_violation or is_cross_domain_violation:
                 violations.append({
-                    "from_file":   data["from_file"],
-                    "to_file":     data["to_file"],
-                    "from_symbol": data["from_symbol"],
-                    "to_symbol":   data["to_symbol"],
+                    "from_file":   data.get("from_file", ""),
+                    "to_file":     data.get("to_file", ""),
+                    "from_symbol": data.get("from_symbol", ""),
+                    "to_symbol":   data.get("to_symbol", ""),
+                    "from_layer":  from_layer,
+                    "to_layer":    to_layer,
                     "description": (
-                        f"{data['from_file']} → {data['to_file']} (cross-domain CALLS)"
+                        f"{data.get('from_file', '')} [{from_layer}] → "
+                        f"{data.get('to_file', '')} [{to_layer}] (CALLS layer violation)"
                     ),
                 })
         return violations
@@ -249,13 +277,21 @@ class DependencyGraph:
         Return a summary dict written into state["ingestion_stats"].
         """
         return {
-            "total_nodes":      self.graph.number_of_nodes(),
-            "total_edges":      self.graph.number_of_edges(),
-            "cycles_found":     len(self._cycles),
-            "layer_violations": len(self._violations),
-            "orphans_found":    len(self._orphans),
-            "high_coupling":    len(self._high_coupling),
-            "density":          nx.density(self.graph),
+            "total_nodes":        self.graph.number_of_nodes(),
+            "total_edges":        self.graph.number_of_edges(),
+            "cycles_found":       len(self._cycles),
+            "layer_violations":   len(self._violations),
+            "orphans_found":      len(self._orphans),
+            "high_coupling":      len(self._high_coupling),
+            "density":            nx.density(self.graph),
+            "external_calls":     sum(
+                1 for _, _, d in self.graph.edges(data=True)
+                if d.get("is_external", False)
+            ),
+            "layer_distribution": dict(Counter(
+                d.get("layer", "unknown")
+                for _, d in self.graph.nodes(data=True)
+            )),
         }
 
     # ── Persistence ───────────────────────────────────────────────────────────

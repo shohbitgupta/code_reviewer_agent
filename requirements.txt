@@ -16,3 +16,11 @@ qdrant-client>=1.9
 
 # ── Dependency graph (Step 1j) ────────────────────────────────────────────────
 networkx>=3.3
+
+# ── Tree-sitter (Step 1f — structural AST parsing) ────────────────────────────
+# Pinned to 0.23.2: grammar packages use ABI 14, compatible with 0.22–0.23.x
+# tree-sitter-dart  — not on PyPI; dart_parser.py (regex) used instead
+# tree-sitter-swift — 0.0.1 too limited; swift_parser.py (regex) used instead
+tree-sitter==0.23.2
+tree-sitter-kotlin==1.1.0
+tree-sitter-rust==0.21.2

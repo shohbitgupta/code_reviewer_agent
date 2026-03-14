@@ -124,6 +124,9 @@ class ParsedSymbol:
     calls:       List[str] = field(default_factory=list)  # called symbol names
     imports:     List[str] = field(default_factory=list)  # import paths
     bases:       List[str] = field(default_factory=list)  # base class names
+    # ── Tier 1 additions (populated by tree-sitter parsers) ───────────────
+    param_types: List[str]       = field(default_factory=list)  # e.g. ["String", "BuildContext"]
+    return_type: Optional[str]   = None                          # e.g. "Future<Widget>", "void"
 
 
 @dataclass
@@ -191,6 +194,9 @@ class CodeChunk:
     calls:          List[str] = field(default_factory=list)
     dependencies:   List[str] = field(default_factory=list)
 
+    # Architectural layer — assigned at Step 1f-LA (Language Analyzer)
+    layer: str = "unknown"   # "presentation"|"domain"|"data"|"infrastructure"|"unknown"
+
     # Embeddings — assigned at Step 1k
     embedding: Optional[List[float]] = None
 
@@ -244,6 +250,7 @@ class CodeChunk:
             "imports":           self.imports,
             "calls":             self.calls,
             "dependencies":      self.dependencies,
+            "layer":             self.layer,
             "embedding":         self.embedding,
         }
 
@@ -252,6 +259,7 @@ class CodeChunk:
         """Deserialise from a plain dict."""
         d = dict(d)
         d["chunk_type"] = ChunkType(d["chunk_type"])
+        d.setdefault("layer", "unknown")  # backwards-compat for cached chunks
         return cls(**d)
 
     def to_qdrant_payload(self) -> dict:
@@ -275,6 +283,7 @@ class CodeChunk:
             "next_chunk_id":   self.next_chunk_id,    # ★
             "summary":         self.summary or "",
             "content":         self.content,
+            "layer":           self.layer,
         }
 
 
@@ -301,3 +310,7 @@ class DependencyEdge:
     is_cross_domain: bool           # top-level directories differ
     raw_import:      Optional[str] = None  # original import statement
     weight:          float          = 1.0
+    # ── Tier 1 additions (resolution metadata) ────────────────────────────
+    is_external:  bool  = False    # target is outside the project (SDK, stdlib)
+    confidence:   float = 1.0      # 1.0 exact, 0.8 name-match, 0.5 heuristic
+    resolved_via: str   = "exact"  # "exact"|"name_match"|"heuristic"

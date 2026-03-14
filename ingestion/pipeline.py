@@ -14,6 +14,7 @@ Usage:
 
 import logging
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -45,6 +46,8 @@ class IngestionPipelineResult:
     dependency_graph: DependencyGraph
     layout:           WorkspaceLayout
     stats:            Dict = field(default_factory=dict)
+    symbol_table:     object = None   # ProjectSymbolTable (typed as object to avoid import)
+    analysis_result:  object = None   # AnalysisResult
 
 
 class IngestionPipeline:
@@ -135,12 +138,27 @@ class IngestionPipeline:
         parser       = FileParser()
         parsed_files = parser.parse_many(file_metas, cache_dir=layout.parsed_dir)
 
+        # ── Step 1f-ST: Project Symbol Table ──────────────────────────────────
+        logger.info("=== Step 1f-ST: Project Symbol Table ===")
+        from ingestion.symbol_table import ProjectSymbolTable
+        from ingestion.language_analyzer import LanguageAnalyzerOrchestrator
+
+        symbol_table = ProjectSymbolTable()
+        symbol_table.build(parsed_files)
+        logger.info("[SymbolTable] %d symbols indexed", len(symbol_table))
+
+        # ── Step 1f-LA: Language Analyzer (Tier 1) ────────────────────────────
+        logger.info("=== Step 1f-LA: Language Analyzer ===")
+        orchestrator    = LanguageAnalyzerOrchestrator(symbol_table=symbol_table)
+        analysis_result = orchestrator.analyze(parsed_files)
+
         # ── Step 1g: Chunking ─────────────────────────────────────────────────
         logger.info("=== Step 1g: Chunking ===")
         builder    = HierarchicalChunkBuilder(repo_name=repo_name)
         chunks     = builder.chunk_many(
             parsed_files,
             jsonl_path=layout.chunks_dir / "chunks.jsonl",
+            analysis_result=analysis_result,
         )
 
         # chunk_map keyed by UUID — used for O(1) lookup by ID
@@ -153,6 +171,9 @@ class IngestionPipeline:
             key = f"{c.file_path}::{c.symbol_name}"
             if key not in chunk_map:           # first definition wins
                 chunk_map[key] = c
+
+        # Fill chunk_ids on symbol table entries (needed for Resolver to link calls)
+        symbol_table.link_chunks(chunks)
 
         # ── Step 1h: Metadata Extraction (summaries) ──────────────────────────
         if not skip_summaries:
@@ -173,7 +194,7 @@ class IngestionPipeline:
         extractor = DependencyExtractor(
             repo_root=clone_result.local_repo_path
         )
-        edges = extractor.extract(parsed_files, chunk_map)
+        edges = extractor.extract(parsed_files, chunk_map, analysis_result=analysis_result)
 
         # ── Step 1j: Dependency Graph Building ────────────────────────────────
         logger.info("=== Step 1j: Graph Building ===")
@@ -217,6 +238,11 @@ class IngestionPipeline:
             "orphans_found":           graph_stats["orphans_found"],
             "qdrant_points_upserted":  len(chunks) if not skip_qdrant else 0,
             "duration_seconds":        round(duration, 2),
+            "symbols_indexed":         len(symbol_table),
+            "calls_resolved":          analysis_result.total_calls_resolved,
+            "calls_external":          analysis_result.total_calls_external,
+            "layer_distribution":      dict(Counter(analysis_result.layer_map.values()))
+                                       if analysis_result.layer_map else {},
         }
 
         logger.info(
@@ -232,6 +258,8 @@ class IngestionPipeline:
             dependency_graph = dep_graph,
             layout           = layout,
             stats            = stats,
+            symbol_table     = symbol_table,
+            analysis_result  = analysis_result,
         )
 
 

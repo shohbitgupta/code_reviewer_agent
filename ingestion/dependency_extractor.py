@@ -53,8 +53,9 @@ class DependencyExtractor:
 
     def extract(
         self,
-        parsed_files: List[ParsedFile],
-        chunk_map:    Dict[str, CodeChunk],
+        parsed_files:    List[ParsedFile],
+        chunk_map:       Dict[str, CodeChunk],
+        analysis_result: Optional["AnalysisResult"] = None,
     ) -> List[DependencyEdge]:
         """
         Produce all dependency edges for the given parsed files.
@@ -62,13 +63,21 @@ class DependencyExtractor:
         Also back-populates outgoing_edges / incoming_edges on each CodeChunk.
 
         Args:
-            parsed_files: Output of Step 1f.
-            chunk_map:    Dict keyed by both chunk_id (UUID) and
-                          "file_path::symbol_name" for fast lookup.
+            parsed_files:    Output of Step 1f.
+            chunk_map:       Dict keyed by both chunk_id (UUID) and
+                             "file_path::symbol_name" for fast lookup.
+            analysis_result: Optional AnalysisResult from Step 1f-LA.
+                             When provided, CALLS/INHERITS/IMPORTS edges are
+                             generated from the resolved data instead of the
+                             raw name-matching heuristics.
 
         Returns:
             Deduplicated List[DependencyEdge].
         """
+        if analysis_result is not None:
+            return self._extract_with_analysis(parsed_files, chunk_map, analysis_result)
+
+        # ── Backward-compat path (no analysis_result) ────────────────────────
         edges: List[DependencyEdge] = []
         dropped = 0
 
@@ -125,6 +134,163 @@ class DependencyExtractor:
         logger.info(
             "[DependencyExtractor] Extracted %d edges (%d unresolved dropped)",
             len(edges), dropped,
+        )
+        return edges
+
+    # ── Analysis-result-aware extraction path ────────────────────────────────
+
+    def _extract_with_analysis(
+        self,
+        parsed_files:    List[ParsedFile],
+        chunk_map:       Dict[str, CodeChunk],
+        analysis_result: "AnalysisResult",
+    ) -> List[DependencyEdge]:
+        """
+        Generate edges using the pre-resolved data in analysis_result.
+
+        BELONGS_TO edges still use the existing parent_name logic (unchanged).
+        CALLS edges come from resolved_calls.
+        INHERITS edges come from resolved_bases.
+        IMPORTS edges come from resolved_imports.
+        """
+        edges: List[DependencyEdge] = []
+        dropped = 0
+
+        # ── BELONGS_TO: unchanged — still resolved from parsed symbols ────────
+        for pf in parsed_files:
+            for sym in pf.symbols:
+                if sym.symbol_type == "method" and sym.parent_name:
+                    edge = self._belongs_to_edge(sym, pf, chunk_map)
+                    if edge:
+                        edges.append(edge)
+                    else:
+                        dropped += 1
+
+        # ── CALLS: from analysis_result.resolved_calls ───────────────────────
+        external_calls = 0
+        for caller_qual, resolved_calls in analysis_result.resolved_calls.items():
+            # caller_qual = "file_path::symbol_name"
+            from_chunk = chunk_map.get(caller_qual)
+            if from_chunk is None:
+                # Try looking up by chunk_id in case it was stored differently
+                dropped += len(resolved_calls)
+                continue
+
+            for rc in resolved_calls:
+                if rc.is_external:
+                    external_calls += 1
+                    continue  # skip external targets — no to_chunk in chunk_map
+
+                to_chunk = None
+                if rc.resolved_chunk_id:
+                    to_chunk = chunk_map.get(rc.resolved_chunk_id)
+                if to_chunk is None and rc.resolved_file and rc.callee_name:
+                    # Fallback: file::callee_name lookup
+                    to_chunk = chunk_map.get(f"{rc.resolved_file}::{rc.callee_name}")
+
+                if to_chunk is None or from_chunk.chunk_id == to_chunk.chunk_id:
+                    dropped += 1
+                    continue
+
+                is_cross_file = from_chunk.file_path != to_chunk.file_path
+                is_cross_domain = self._cross_domain(from_chunk.file_path, to_chunk.file_path)
+                edges.append(DependencyEdge(
+                    from_chunk_id   = from_chunk.chunk_id,
+                    to_chunk_id     = to_chunk.chunk_id,
+                    edge_type       = EdgeType.CALLS,
+                    from_symbol     = from_chunk.symbol_name,
+                    to_symbol       = rc.callee_name,
+                    from_file       = from_chunk.file_path,
+                    to_file         = to_chunk.file_path,
+                    is_cross_file   = is_cross_file,
+                    is_cross_domain = is_cross_domain,
+                    is_external     = False,
+                    confidence      = rc.confidence,
+                    resolved_via    = "exact" if rc.confidence >= 1.0 else (
+                        "name_match" if rc.confidence >= 0.8 else "heuristic"
+                    ),
+                ))
+
+        # ── INHERITS: from analysis_result.resolved_bases ────────────────────
+        for class_qual, base_quals in analysis_result.resolved_bases.items():
+            from_chunk = chunk_map.get(class_qual)
+            if from_chunk is None:
+                dropped += len(base_quals)
+                continue
+            for base_qual in base_quals:
+                to_chunk = chunk_map.get(base_qual)
+                if to_chunk is None:
+                    dropped += 1
+                    continue
+                if from_chunk.chunk_id == to_chunk.chunk_id:
+                    continue
+                is_cross_file = from_chunk.file_path != to_chunk.file_path
+                is_cross_domain = self._cross_domain(from_chunk.file_path, to_chunk.file_path)
+                edges.append(DependencyEdge(
+                    from_chunk_id   = from_chunk.chunk_id,
+                    to_chunk_id     = to_chunk.chunk_id,
+                    edge_type       = EdgeType.INHERITS,
+                    from_symbol     = from_chunk.symbol_name,
+                    to_symbol       = to_chunk.symbol_name,
+                    from_file       = from_chunk.file_path,
+                    to_file         = to_chunk.file_path,
+                    is_cross_file   = is_cross_file,
+                    is_cross_domain = is_cross_domain,
+                    confidence      = 1.0,
+                    resolved_via    = "exact",
+                ))
+
+        # ── IMPORTS: from analysis_result.resolved_imports ───────────────────
+        for caller_file, target_files in analysis_result.resolved_imports.items():
+            # Find the import chunk for this file (symbol_name="imports" or type=import)
+            import_chunk = chunk_map.get(f"{caller_file}::imports")
+            if import_chunk is None:
+                # Try finding any IMPORT chunk for this file
+                import_chunk = next(
+                    (
+                        c for c in chunk_map.values()
+                        if isinstance(c, CodeChunk)
+                        and c.file_path == caller_file
+                        and c.chunk_type.value == "import"
+                    ),
+                    None,
+                )
+            if import_chunk is None:
+                dropped += len(target_files)
+                continue
+            for target_file in target_files:
+                to_chunk = self._resolve_module_chunk(target_file, chunk_map)
+                if to_chunk is None:
+                    dropped += 1
+                    continue
+                if import_chunk.chunk_id == to_chunk.chunk_id:
+                    continue
+                is_cross_file = import_chunk.file_path != to_chunk.file_path
+                is_cross_domain = self._cross_domain(import_chunk.file_path, to_chunk.file_path)
+                edges.append(DependencyEdge(
+                    from_chunk_id   = import_chunk.chunk_id,
+                    to_chunk_id     = to_chunk.chunk_id,
+                    edge_type       = EdgeType.IMPORTS,
+                    from_symbol     = caller_file,
+                    to_symbol       = target_file,
+                    from_file       = import_chunk.file_path,
+                    to_file         = to_chunk.file_path,
+                    is_cross_file   = is_cross_file,
+                    is_cross_domain = is_cross_domain,
+                    confidence      = 1.0,
+                    resolved_via    = "exact",
+                ))
+
+        # Deduplicate
+        edges = self._deduplicate(edges)
+
+        # Back-populate edges onto chunks
+        self._back_populate(edges, chunk_map)
+
+        logger.info(
+            "[DependencyExtractor] Extracted %d edges "
+            "(%d unresolved dropped, %d external calls skipped)",
+            len(edges), dropped, external_calls,
         )
         return edges
 
