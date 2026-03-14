@@ -40,17 +40,17 @@ logger = logging.getLogger(__name__)
 
 # Try tree-sitter parsers; fall back to regex if grammar unavailable
 try:
-    from ingestion.parsers.kotlin_ts_parser import KotlinTSParser
-    _kotlin_parser: Type[BaseParser] = KotlinTSParser
-    if not KotlinTSParser._make_parser():
+    from ingestion.parsers.kotlin_ts_parser import KotlinTsParser
+    _kotlin_parser: Type[BaseParser] = KotlinTsParser
+    if not KotlinTsParser._make_parser():
         from ingestion.parsers.kotlin_parser import KotlinParser as _kotlin_parser  # noqa: F811
 except Exception:
     from ingestion.parsers.kotlin_parser import KotlinParser as _kotlin_parser  # noqa: F811
 
 try:
-    from ingestion.parsers.rust_ts_parser import RustTSParser
-    _rust_parser: Type[BaseParser] = RustTSParser
-    if not RustTSParser._make_parser():
+    from ingestion.parsers.rust_ts_parser import RustTsParser
+    _rust_parser: Type[BaseParser] = RustTsParser
+    if not RustTsParser._make_parser():
         from ingestion.parsers.rust_parser import RustParser as _rust_parser  # noqa: F811
 except Exception:
     from ingestion.parsers.rust_parser import RustParser as _rust_parser  # noqa: F811
@@ -248,6 +248,8 @@ def _save_cache(result: ParsedFile, cache_dir: Optional[Path]) -> None:
                     "calls":       s.calls,
                     "imports":     s.imports,
                     "bases":       s.bases,
+                    "param_types": s.param_types,
+                    "return_type": s.return_type,
                 }
                 for s in result.symbols
             ],
