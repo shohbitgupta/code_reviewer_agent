@@ -74,11 +74,12 @@ class IngestionPipeline:
 
     def run(
         self,
-        embed_tool:   Optional[EmbeddingTool]  = None,
-        qdrant_tool:  Optional[QdrantTool]     = None,
-        llm_client                             = None,
-        skip_summaries: bool                   = False,
-        skip_qdrant:    bool                   = False,
+        embed_tool:     Optional[EmbeddingTool] = None,
+        qdrant_tool:    Optional[QdrantTool]    = None,
+        llm_client                              = None,
+        skip_summaries: bool                    = False,
+        skip_qdrant:    bool                    = False,
+        max_workers:    Optional[int]           = None,
     ) -> IngestionPipelineResult:
         """
         Execute the full ingestion pipeline.
@@ -89,11 +90,17 @@ class IngestionPipeline:
             llm_client:      anthropic.AsyncAnthropic client for Step 1h.
             skip_summaries:  Set True to skip Step 1h (no LLM calls).
             skip_qdrant:     Set True to skip Step 1k (no Qdrant upsert).
+            max_workers:     Parallel thread count for file-level steps (1f,
+                             1f-SBR, 1g).  None = auto-size; 1 = serial.
 
         Returns:
             IngestionPipelineResult
         """
         pipeline_start = time.monotonic()
+        step_times: Dict = {}
+
+        def _t(name: str, start: float) -> None:
+            step_times[name] = round(time.monotonic() - start, 3)
 
         # ── Lazy-create tools if not injected ────────────────────────────────
         if embed_tool is None:
@@ -135,31 +142,50 @@ class IngestionPipeline:
 
         # ── Step 1f: File Parser ──────────────────────────────────────────────
         logger.info("=== Step 1f: File Parser ===")
+        _s = time.monotonic()
         parser       = FileParser()
-        parsed_files = parser.parse_many(file_metas, cache_dir=layout.parsed_dir)
+        parsed_files = parser.parse_many(
+            file_metas, cache_dir=layout.parsed_dir, max_workers=max_workers
+        )
+        _t("1f_parse", _s)
 
         # ── Step 1f-ST: Project Symbol Table ──────────────────────────────────
         logger.info("=== Step 1f-ST: Project Symbol Table ===")
+        _s = time.monotonic()
         from ingestion.symbol_table import ProjectSymbolTable
         from ingestion.language_analyzer import LanguageAnalyzerOrchestrator
 
         symbol_table = ProjectSymbolTable()
         symbol_table.build(parsed_files)
         logger.info("[SymbolTable] %d symbols indexed", len(symbol_table))
+        _t("1f_st", _s)
 
         # ── Step 1f-LA: Language Analyzer (Tier 1) ────────────────────────────
         logger.info("=== Step 1f-LA: Language Analyzer ===")
+        _s = time.monotonic()
         orchestrator    = LanguageAnalyzerOrchestrator(symbol_table=symbol_table)
         analysis_result = orchestrator.analyze(parsed_files)
+        _t("1f_la", _s)
+
+        # ── Step 1f-SBR: Symbol Boundary Resolver ────────────────────────────
+        logger.info("=== Step 1f-SBR: Symbol Boundary Resolver ===")
+        _s = time.monotonic()
+        from ingestion.symbol_boundary_resolver import SymbolBoundaryResolver
+        sbr          = SymbolBoundaryResolver()
+        parsed_files = sbr.resolve(parsed_files, max_workers=max_workers)
+        _t("1f_sbr", _s)
 
         # ── Step 1g: Chunking ─────────────────────────────────────────────────
         logger.info("=== Step 1g: Chunking ===")
+        _s = time.monotonic()
         builder    = HierarchicalChunkBuilder(repo_name=repo_name)
         chunks     = builder.chunk_many(
             parsed_files,
             jsonl_path=layout.chunks_dir / "chunks.jsonl",
             analysis_result=analysis_result,
+            max_workers=max_workers,
         )
+        _t("1g_chunk", _s)
 
         # chunk_map keyed by UUID — used for O(1) lookup by ID
         chunk_map: Dict[str, CodeChunk] = {c.chunk_id: c for c in chunks}
@@ -243,6 +269,8 @@ class IngestionPipeline:
             "calls_external":          analysis_result.total_calls_external,
             "layer_distribution":      dict(Counter(analysis_result.layer_map.values()))
                                        if analysis_result.layer_map else {},
+            "step_times_seconds":      step_times,
+            "max_workers":             max_workers,
         }
 
         logger.info(

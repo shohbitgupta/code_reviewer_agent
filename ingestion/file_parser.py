@@ -157,16 +157,32 @@ class FileParser:
 
     def parse_many(
         self,
-        file_metas: List[FileMeta],
-        cache_dir:  Optional[Path] = None,
+        file_metas:  List[FileMeta],
+        cache_dir:   Optional[Path] = None,
+        max_workers: Optional[int]  = None,
     ) -> List[ParsedFile]:
         """
-        Parse a list of files and log aggregate stats.
+        Parse a list of files, optionally in parallel, and log aggregate stats.
+
+        Parallelism notes
+        -----------------
+        Each file is parsed independently (no shared mutable state between
+        calls).  File I/O and tree-sitter C extensions release the GIL, so
+        ThreadPoolExecutor provides real concurrency here.
+
+        Args:
+            file_metas:  FileMeta objects from Step 1e.
+            cache_dir:   workspace/runs/{run_id}/parsed/ for caching.
+            max_workers: Thread count.  None = auto-size (recommended).
+                         Set to 1 to force serial execution.
 
         Returns:
             List[ParsedFile] in the same order as file_metas.
         """
-        results   = [self.parse(fm, cache_dir) for fm in file_metas]
+        from ingestion.workers import WorkerPool
+        pool      = WorkerPool(max_workers=max_workers, io_bound=True)
+        parse_fn  = lambda fm: self.parse(fm, cache_dir)
+        results   = pool.map(parse_fn, file_metas)
         succeeded = sum(1 for r in results if r.parse_success)
         total_sym = sum(len(r.symbols) for r in results)
         logger.info(

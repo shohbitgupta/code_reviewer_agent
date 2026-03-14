@@ -109,25 +109,32 @@ class HierarchicalChunkBuilder:
 
     def chunk_many(
         self,
-        parsed_files: List[ParsedFile],
-        jsonl_path: Optional[Path] = None,
-        analysis_result=None,
+        parsed_files:    List[ParsedFile],
+        jsonl_path:      Optional[Path] = None,
+        analysis_result: object         = None,
+        max_workers:     Optional[int]  = None,
     ) -> List[CodeChunk]:
         """
         Chunk all files and optionally persist to a JSONL file.
 
+        Each file is chunked independently (chunk_file reads only self.repo_name,
+        which is immutable after construction), so files can be processed in
+        parallel.  Pure-Python work; io_bound=False caps threads at cpu_count.
+
         Args:
-            parsed_files:    Output of Step 1f.
+            parsed_files:    Output of Step 1f-SBR.
             jsonl_path:      Optional path to write chunks.jsonl.
             analysis_result: Optional AnalysisResult from Step 1f-LA.
                              When provided, assigns layer tags to chunks.
+            max_workers:     Thread count.  None = auto-size.  1 = serial.
 
         Returns:
             Flat list of all CodeChunk objects across all files.
         """
-        all_chunks: List[CodeChunk] = []
-        for pf in parsed_files:
-            all_chunks.extend(self.chunk_file(pf))
+        from ingestion.workers import WorkerPool
+        pool       = WorkerPool(max_workers=max_workers, io_bound=False)
+        per_file   = pool.map(self.chunk_file, parsed_files)
+        all_chunks: List[CodeChunk] = [c for file_chunks in per_file for c in file_chunks]
 
         # Assign layer tags from AnalysisResult when available
         if analysis_result:

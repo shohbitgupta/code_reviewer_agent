@@ -13,6 +13,7 @@ Subclasses must implement:
 """
 
 import logging
+import threading
 from abc import abstractmethod
 from typing import List, Optional, Set
 
@@ -20,6 +21,10 @@ from ingestion.models import ParsedSymbol
 from ingestion.parsers.base import BaseParser
 
 logger = logging.getLogger(__name__)
+
+# One module-level lock is sufficient: language loading happens at most once per
+# subclass, then the fast path (cls._language_loaded is True) is taken lock-free.
+_LANGUAGE_INIT_LOCK = threading.Lock()
 
 
 class TreeSitterParser(BaseParser):
@@ -78,18 +83,26 @@ class TreeSitterParser(BaseParser):
 
     @classmethod
     def _get_language(cls):
-        """Lazy-load and cache the Language object (once per subclass)."""
-        if not cls._language_loaded:
-            cls._language_loaded = True
-            try:
-                cls._language_obj = cls._load_language()
-            except Exception as exc:
-                logger.warning(
-                    "tree-sitter grammar not available for %s: %s",
-                    cls.__name__,
-                    exc,
-                )
-                cls._language_obj = None
+        """
+        Lazy-load and cache the Language object (once per subclass).
+
+        Thread-safe: uses double-checked locking so that concurrent calls from
+        parallel worker threads never load the grammar twice.
+        """
+        if cls._language_loaded:          # fast path — no lock needed after first load
+            return cls._language_obj
+        with _LANGUAGE_INIT_LOCK:
+            if not cls._language_loaded:  # re-check inside the lock
+                cls._language_loaded = True
+                try:
+                    cls._language_obj = cls._load_language()
+                except Exception as exc:
+                    logger.warning(
+                        "tree-sitter grammar not available for %s: %s",
+                        cls.__name__,
+                        exc,
+                    )
+                    cls._language_obj = None
         return cls._language_obj
 
     # ── BaseParser.parse implementation ──────────────────────────────────────
