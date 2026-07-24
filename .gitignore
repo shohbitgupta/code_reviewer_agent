@@ -1,1 +1,5 @@
-__pycahce__
+__pycache__/
+*.pyc
+*.pyo
+
+workspace/*

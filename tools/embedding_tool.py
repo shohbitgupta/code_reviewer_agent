@@ -24,7 +24,7 @@ import logging
 import os
 from typing import List
 
-import config
+from core import config
 
 logger = logging.getLogger(__name__)
 

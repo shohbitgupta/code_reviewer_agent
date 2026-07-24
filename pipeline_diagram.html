@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ingestion Pipeline — Tier 1</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #f0ebe0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 16px 48px;
+      min-height: 100vh;
+    }
+    canvas {
+      display: block;
+      background: #fffef9;
+      border-radius: 12px;
+      box-shadow: 0 6px 32px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="https://unpkg.com/roughjs@4.6.6/bundled/rough.js"></script>
+<script>
+(function () {
+
+  /* ── canvas setup ───────────────────────────────────────────────── */
+  const canvas = document.getElementById('c');
+  const W = 980, H = 1610;
+  canvas.width  = W;
+  canvas.height = H;
+
+  const rc  = rough.canvas(canvas);
+  const ctx = canvas.getContext('2d');
+
+  /* ── layout constants ───────────────────────────────────────────── */
+  const CX  = 420;   // center-x of main column
+  const BW  = 308;   // step-box width
+  const BH  = 60;    // step-box height
+  const BX  = CX - BW / 2;   // 266   (left edge of boxes)
+  const GAP = 30;    // vertical gap between groups
+
+  /* ── colour themes ──────────────────────────────────────────────── */
+  const T = {
+    setup : { gFill:'#e7f5ff', gStroke:'#4dabf7', bFill:'#d0ebff', bStroke:'#1971c2' },
+    scan  : { gFill:'#ebfbee', gStroke:'#51cf66', bFill:'#b2f2bb', bStroke:'#2f9e44' },
+    parse : { gFill:'#fff9db', gStroke:'#fcc419', bFill:'#ffec99', bStroke:'#e67700' },
+    chunk : { gFill:'#f3f0ff', gStroke:'#9775fa', bFill:'#e5dbff', bStroke:'#7048e8' },
+    store : { gFill:'#fff0f6', gStroke:'#f783ac', bFill:'#fcc2d7', bStroke:'#c2255c' },
+  };
+
+  /* ── primitive helpers ──────────────────────────────────────────── */
+
+  function rRect(x, y, w, h, fill, stroke, roughness, sw, dash) {
+    const o = { fill, fillStyle:'solid', stroke, strokeWidth: sw || 2,
+                roughness: roughness || 1.9, bowing: 0.8 };
+    if (dash) o.strokeLineDash = dash;
+    rc.rectangle(x, y, w, h, o);
+  }
+
+  function txt(s, x, y, { sz=16, w='400', c='#212529', a='center' }={}) {
+    ctx.save();
+    ctx.font       = `${w} ${sz}px Caveat, cursive`;
+    ctx.fillStyle  = c;
+    ctx.textAlign  = a;
+    ctx.fillText(s, x, y);
+    ctx.restore();
+  }
+
+  function arrow(x1, y1, x2, y2, color='#868e96') {
+    rc.line(x1, y1, x2, y2, { stroke:color, strokeWidth:2, roughness:1.4 });
+    const a = Math.atan2(y2-y1, x2-x1), s = 11;
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - s*Math.cos(a-.45), y2 - s*Math.sin(a-.45));
+    ctx.lineTo(x2 - s*Math.cos(a+.45), y2 - s*Math.sin(a+.45));
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /* ── compound draw helpers ──────────────────────────────────────── */
+
+  /**
+   * Draw a group background with dashed border and a label above-left.
+   */
+  function group(y, h, theme, label) {
+    const pad = 22;
+    rRect(BX - pad, y - 16, BW + pad*2, h, theme.gFill, theme.gStroke, 1.1, 1.4, [9, 5]);
+    txt(label, BX - pad + 6, y - 20, { sz:13, w:'700', c:theme.gStroke, a:'left' });
+  }
+
+  /**
+   * Draw one pipeline step box with an ID badge area and title/subtitle.
+   *   idLabel  — "1a", "1f-ST", etc.
+   *   title    — main label
+   *   sub      — small grey subtitle (null to omit)
+   */
+  function step(y, idLabel, title, sub, theme) {
+    rRect(BX, y, BW, BH, theme.bFill, theme.bStroke);
+
+    // ── ID column (left stripe) ──────────────────────────────────
+    const IDW = 50;
+    rc.line(BX + IDW, y + 8, BX + IDW, y + BH - 8,
+      { stroke: theme.bStroke, strokeWidth: 1, roughness: 1.5 });
+
+    txt(idLabel, BX + IDW/2, y + BH/2 + (sub ? -4 : 5),
+      { sz: 13, w:'700', c: theme.bStroke });
+
+    // ── title + subtitle ─────────────────────────────────────────
+    const tCX  = BX + IDW + (BW - IDW) / 2;
+    const titY = sub ? y + BH/2 - 4 : y + BH/2 + 7;
+    txt(title, tCX, titY,        { sz:17, w:'700', c:'#1a1a1a' });
+    if (sub) txt(sub, tCX, y + BH/2 + 15, { sz:12, c:'#6c757d' });
+  }
+
+  /**
+   * Small note box (used for sub-pass list inside a group).
+   */
+  function noteBox(y, lines) {
+    const NW = BW - 24, NH = 14 + lines.length * 19 + 10;
+    const NX = BX + 12;
+    rRect(NX, y, NW, NH, '#fffbe6', '#ced4da', 1.0, 1.0);
+    // pencil icon hint
+    txt('✏', NX + 10, y + 18, { sz:13, c:'#aaa' });
+    lines.forEach((l, i) =>
+      txt(l, NX + NW/2, y + 18 + i * 19, { sz:12, c:'#555' })
+    );
+    return NH;
+  }
+
+  /**
+   * Draw a right-side annotation balloon.
+   */
+  function balloon(y, lines, color='#4dabf7') {
+    const AX = BX + BW + 18;
+    const AW = W - AX - 20;
+    const AH = 14 + lines.length * 18 + 10;
+    rRect(AX, y, AW, AH, '#fffef9', color, 1.0, 1.2);
+    // connector dot
+    ctx.save(); ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(BX+BW+6, y + AH/2, 3, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    rc.line(BX+BW+9, y+AH/2, AX, y+AH/2, { stroke:color, strokeWidth:1, roughness:1 });
+    lines.forEach((l, i) =>
+      txt(l, AX + AW/2, y + 18 + i * 18, { sz:12, c:'#555' })
+    );
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     DRAW
+  ═══════════════════════════════════════════════════════════════════ */
+
+  function draw() {
+
+    /* title ─────────────────────────────────────────────────────── */
+    txt('Ingestion Pipeline — Tier 1', CX, 50, { sz:32, w:'700', c:'#1a1a1a' });
+    rc.line(BX - 20, 60, BX + BW + 20, 60, { stroke:'#dee2e6', strokeWidth:1.5, roughness:2.5 });
+
+    /* ── GROUP 1 · Setup ────────────────────────────────────────── */
+    let y = 76;
+    const G1H = 172;
+    group(y, G1H, T.setup, 'Setup');
+    step(y + 4,  '1a', 'Fetch Repo',    'git clone / pull', T.setup);
+    step(y + 88, '1b', 'Workspace',     'run_id · dir layout', T.setup);
+    arrow(CX, y + G1H + 2, CX, y + G1H + GAP);
+
+    /* ── GROUP 2 · Discovery ────────────────────────────────────── */
+    y += G1H + GAP;   // 278
+    const G2H = 256;
+    group(y, G2H, T.scan, 'Discovery');
+    step(y + 4,   '1c', 'Repo Scanner',       'file inventory · structure hints', T.scan);
+    step(y + 88,  '1d', 'Language Detection', 'ext · content · vendor · binary flags', T.scan);
+    step(y + 172, '1e', 'File Filter',        'binary · vendor · size limits', T.scan);
+    arrow(CX, y + G2H + 2, CX, y + G2H + GAP);
+
+    /* ── GROUP 3 · Parsing & Analysis ──────────────────────────── */
+    y += G2H + GAP;   // 564
+    // 4 step boxes + 1 note box + padding
+    const G3H = 4 * 84 + 60 + 44 + 24;   // = 464
+    group(y, G3H, T.parse, 'Parsing & Analysis  (NEW in Tier 1)');
+
+    step(y + 4,   '1f',     'File Parser',             'tree-sitter: Kotlin · Rust  /  regex: Swift · Dart · Python', T.parse);
+    step(y + 88,  '1f-ST',  'Project Symbol Table',    'cross-file qualified-name index', T.parse);
+    step(y + 172, '1f-LA',  'Language Analyzer',       'layer · calls · bases · imports resolved', T.parse);
+    step(y + 256, '1f-SBR', 'Symbol Boundary Resolver','large fns · nested classes · macro expansions · partial impls', T.parse);
+
+    // Sub-note: SBR internal passes
+    noteBox(y + 332, [
+      'Pass 1  sort + @nested_class tags  ·  Pass 2  split > 100 lines → typed parts (not BLOCK)',
+      'Pass 3  @macro_expanded (Rust)  ·  Pass 4  @partial_impl link (Rust / Swift)',
+    ]);
+
+    // right-side balloons for group 3
+    balloon(y + 4,   ['regex fallback when grammar', 'unavailable at runtime'],          T.parse.gStroke);
+    balloon(y + 88,  ['SymbolEntry: qualified_name,', 'file_path, bases, chunk_id'],     T.parse.gStroke);
+    balloon(y + 172, ['AnalysisResult: layer_map,',   'resolved_calls, resolved_bases'], T.parse.gStroke);
+    balloon(y + 256, ['keeps FUNCTION/METHOD type',   'no anonymous BLOCK fallback'],    T.parse.gStroke);
+
+    arrow(CX, y + G3H + 2, CX, y + G3H + GAP);
+
+    /* ── GROUP 4 · Chunking ─────────────────────────────────────── */
+    y += G3H + GAP;   // ~1058
+    const G4H = 172;
+    group(y, G4H, T.chunk, 'Chunking');
+    step(y + 4,  '1g', 'Chunker',           'resolved symbols → typed chunks · layer tags', T.chunk);
+    step(y + 88, '1h', 'Summary Generator', 'LLM one-liner  ·  embedding batches', T.chunk);
+
+    balloon(y + 4,  ['chunk.layer set from', 'analysis_result.layer_map'], T.chunk.gStroke);
+
+    arrow(CX, y + G4H + 2, CX, y + G4H + GAP);
+
+    /* ── GROUP 5 · Dependency & Storage ────────────────────────── */
+    y += G4H + GAP;   // ~1158
+    const G5H = 258;
+    group(y, G5H, T.store, 'Dependency & Storage');
+    step(y + 4,   '1i', 'Dependency Extractor', 'CALLS · IMPORTS · INHERITS · BELONGS_TO', T.store);
+    step(y + 88,  '1j', 'Graph Builder',         'layer-aware nodes · external edge stats', T.store);
+    step(y + 172, '1k', 'Vector Upsert',          'Qdrant  ·  chunk payloads + embeddings', T.store);
+
+    balloon(y + 4,  ['dual path: analysis_result', '→ resolved edges  (no heuristics)'], T.store.gStroke);
+    balloon(y + 88, ['find_layer_violations()',    'get_stats() → layer_distribution'], T.store.gStroke);
+
+    /* footer ─────────────────────────────────────────────────────── */
+    const footY = y + G5H + 38;
+    txt('✦  Tier 2  —  PR Review Agent + RAG  —  deferred to next phase',
+      CX, footY, { sz:13, c:'#adb5bd' });
+
+    // bottom horizontal rule
+    rc.line(BX - 20, footY + 14, BX + BW + 20, footY + 14,
+      { stroke:'#e9ecef', strokeWidth:1, roughness:2 });
+  }
+
+  /* run after fonts are loaded so Caveat is available */
+  document.fonts.ready.then(draw);
+
+})();
+</script>
+</body>
+</html>

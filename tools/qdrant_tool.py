@@ -27,7 +27,7 @@ Usage:
 import logging
 from typing import Any, Dict, List, Optional
 
-import config
+from core import config
 from tools.embedding_tool import EmbeddingTool
 
 logger = logging.getLogger(__name__)

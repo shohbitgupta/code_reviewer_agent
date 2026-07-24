@@ -1,27 +1,13 @@
-"""
-Global configuration constants for the code reviewer agent.
-
-Override any value via environment variables where noted.
-"""
-import os
-
-# ── LLM Models ────────────────────────────────────────────────────────────────
-SUMMARY_MODEL = "claude-haiku-4-5-20251001"  # Step 1h — cheap/fast summarisation
-REVIEW_MODEL  = "claude-sonnet-4-6"           # Stage 3 — full reasoning
-
-# ── Embeddings ────────────────────────────────────────────────────────────────
-# Backend: "voyage" (default, best for code) or "openai"
-EMBEDDING_BACKEND    = os.getenv("EMBEDDING_BACKEND", "voyage")
-EMBEDDING_MODEL      = os.getenv("EMBEDDING_MODEL", "voyage-code-3")  # or "text-embedding-3-small"
-EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1024"))  # voyage=1024, openai=1536
-
-# ── Qdrant ────────────────────────────────────────────────────────────────────
-QDRANT_URL        = os.getenv("QDRANT_URL", "http://localhost:6333")
-QDRANT_API_KEY    = os.getenv("QDRANT_API_KEY")        # None for local POC
-QDRANT_COLLECTION = "repo_chunks"
-
-# ── Pipeline ──────────────────────────────────────────────────────────────────
-PIPELINE_VERSION = "3.0"
-
-# ── Workspace ─────────────────────────────────────────────────────────────────
-WORKSPACE_ROOT = "./workspace"
+# Backward-compatibility shim — import from core.config instead.
+from core.config import *  # noqa: F401, F403
+from core import config as _c
+SUMMARY_MODEL        = _c.SUMMARY_MODEL
+REVIEW_MODEL         = _c.REVIEW_MODEL
+EMBEDDING_BACKEND    = _c.EMBEDDING_BACKEND
+EMBEDDING_MODEL      = _c.EMBEDDING_MODEL
+EMBEDDING_DIMENSIONS = _c.EMBEDDING_DIMENSIONS
+QDRANT_URL           = _c.QDRANT_URL
+QDRANT_API_KEY       = _c.QDRANT_API_KEY
+QDRANT_COLLECTION    = _c.QDRANT_COLLECTION
+PIPELINE_VERSION     = _c.PIPELINE_VERSION
+WORKSPACE_ROOT       = _c.WORKSPACE_ROOT

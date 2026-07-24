@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import langgraph\")",
+      "Bash(python3 -c \"import requests\")",
+      "Bash(python -c \"from stage5_report.report_builder import ReportBuilder; print\\('OK'\\)\")",
+      "Bash(open /Users/sshobhitggupta/Documents/code_reviewer_agent/workspace/reports/test-preview/report.html)",
+      "Bash(python main.py https://github.com/bagisto/opensource-ecommerce-mobile-app --review --dry-run)",
+      "Bash(kill 44573)",
+      "Bash(tee /tmp/reviewer_run.log)",
+      "Bash(echo \"PID: $!\")"
+    ]
+  }
+}

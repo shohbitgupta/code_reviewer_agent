@@ -1,0 +1,4 @@
+from stage1_ingestion.parsers.python_parser import PythonParser
+from stage1_ingestion.parsers.swift_parser import SwiftParser
+from stage1_ingestion.parsers.rust_parser import RustParser
+from stage1_ingestion.parsers.dart_parser import DartParser

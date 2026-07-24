@@ -15,8 +15,9 @@ import os
 import subprocess
 import time
 from pathlib import Path
+from typing import List
 
-from ingestion.models import CloneResult
+from core.models import CloneResult
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,37 @@ class GitExecutor:
             capture=True,
         )
         return result.stdout.strip()
+
+    def get_changed_files(self, base_sha: str, head_sha: str) -> List[str]:
+        """
+        Return relative file paths that differ between base_sha and head_sha.
+
+        Uses git diff --name-only --diff-filter=ACMRT to include only
+        Added, Copied, Modified, Renamed, and Type-changed files — deleted
+        files are excluded because there is nothing to re-parse.
+
+        Args:
+            base_sha: Commit SHA of the base branch (e.g. merge-base).
+            head_sha: Commit SHA of the PR head.
+
+        Returns:
+            List of relative file paths (relative to repo root), e.g.
+            ["src/auth/login.py", "ingestion/chunker.py"]
+        """
+        result = self._run(
+            [
+                "git", "-C", self.local_path,
+                "diff", "--name-only", "--diff-filter=ACMRT",
+                base_sha, head_sha,
+            ],
+            capture=True,
+        )
+        paths = [p.strip() for p in result.stdout.splitlines() if p.strip()]
+        logger.info(
+            "[GitExecutor] %d changed files between %s..%s",
+            len(paths), base_sha[:8], head_sha[:8],
+        )
+        return paths
 
     def _inject_token(self, url: str) -> str:
         """
