@@ -8,7 +8,11 @@
       "Bash(python main.py https://github.com/bagisto/opensource-ecommerce-mobile-app --review --dry-run)",
       "Bash(kill 44573)",
       "Bash(tee /tmp/reviewer_run.log)",
-      "Bash(echo \"PID: $!\")"
+      "Bash(echo \"PID: $!\")",
+      "Bash(docker --version)",
+      "Bash(brew --version)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(python main.py https://github.com/shohbitgupta/ContactApp --review --skip-summaries)"
     ]
   }
 }

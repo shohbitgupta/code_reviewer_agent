@@ -83,9 +83,10 @@ class ReportBuilder:
     def build(self, state: Dict[str, Any]) -> Dict[str, Any]:
         issues:   List[ReviewIssue]   = state.get("issues",   [])
         comments: List[ReviewComment] = state.get("comments", [])
-        ingestion_stats = state.get("ingestion_stats", {})
-        review_stats    = state.get("review_stats",    {})
-        comment_stats   = state.get("comment_stats",   {})
+        ingestion_stats  = state.get("ingestion_stats",  {})
+        review_stats     = state.get("review_stats",     {})
+        comment_stats    = state.get("comment_stats",    {})
+        ingestion_quality = state.get("ingestion_quality")  # IngestionQualityReport | None
 
         # Root of the cloned repo — used to read source for snippets
         local_repo_path: str = state.get("local_repo_path", "")
@@ -94,6 +95,7 @@ class ReportBuilder:
             issues, comments,
             ingestion_stats, review_stats, comment_stats,
             local_repo_path,
+            ingestion_quality=ingestion_quality,
         )
 
         json_path = self._out_dir / "report.json"
@@ -160,12 +162,13 @@ class ReportBuilder:
 
     def _build_report_dict(
         self,
-        issues:          List[ReviewIssue],
-        comments:        List[ReviewComment],
-        ingestion_stats: Dict,
-        review_stats:    Dict,
-        comment_stats:   Dict,
-        local_repo_path: str,
+        issues:            List[ReviewIssue],
+        comments:          List[ReviewComment],
+        ingestion_stats:   Dict,
+        review_stats:      Dict,
+        comment_stats:     Dict,
+        local_repo_path:   str,
+        ingestion_quality: object = None,
     ) -> Dict[str, Any]:
         by_sev      = Counter(i.severity for i in issues)
         by_cat      = Counter(i.category for i in issues)
@@ -189,6 +192,9 @@ class ReportBuilder:
             "repo_name":    self._repo_name,
             "pr_number":    self._pr_number,
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "ingestion_quality": (
+                ingestion_quality.to_dict() if ingestion_quality is not None else None
+            ),
             "summary": {
                 "total_issues":      len(issues),
                 "by_severity":       dict(by_sev),
@@ -213,6 +219,7 @@ class ReportBuilder:
         files     = report.get("files", [])
         i_stats   = summary.get("ingestion_stats", {})
         r_stats   = summary.get("review_stats", {})
+        quality   = report.get("ingestion_quality")
         ts        = report.get("generated_at", "")[:19].replace("T", " ") + " UTC"
         pr_badge  = f"PR #{report['pr_number']}" if report['pr_number'] else "Local run"
         repo      = _html.escape(report.get("repo_name") or "—")
@@ -249,6 +256,8 @@ class ReportBuilder:
 </div>
 
 <div class="container">
+
+{self._quality_card(quality) if quality else ""}
 
 <!-- ── Severity cards ── -->
 <div class="section">
@@ -415,11 +424,102 @@ pre.code-lines{margin:0;padding:8px 0;overflow-x:auto}
 .no-issues{text-align:center;padding:40px;color:#94a3b8}
 .ni-icon{font-size:44px;margin-bottom:10px}
 
+/* ── Quality Judge card ── */
+.qj-body{display:flex;gap:0;align-items:flex-start}
+.qj-score-wrap{flex:0 0 120px;display:flex;flex-direction:column;
+  align-items:center;gap:10px;padding:20px 16px;border-right:1px solid #f1f5f9}
+.qj-score-ring{width:76px;height:76px;border-radius:50%;border:4px solid;
+  display:flex;flex-direction:column;align-items:center;justify-content:center}
+.qj-score-num{font-size:24px;font-weight:800;line-height:1}
+.qj-score-sub{font-size:10px;color:#94a3b8}
+.qj-decision{font-size:11px;font-weight:700;letter-spacing:.5px;padding:4px 12px;
+  border-radius:99px;text-transform:uppercase}
+.qj-dims{flex:1;padding:8px 0}
+.qj-dim-row{display:flex;align-items:center;gap:10px;padding:7px 16px;
+  border-bottom:1px solid #f8fafc}
+.qj-dim-row:last-child{border:none}
+.qj-dim-id{font-family:monospace;font-size:11px;color:#64748b;
+  min-width:44px;font-weight:600}
+.qj-dim-name{font-size:12px;font-weight:600;min-width:160px;color:#334155}
+.qj-bar-wrap{flex:0 0 100px;background:#f1f5f9;border-radius:4px;
+  height:14px;overflow:hidden}
+.qj-bar{height:100%;border-radius:4px;transition:width .3s}
+.qj-dim-msg{flex:1;font-size:11px;color:#64748b}
+.qj-status-chip{font-size:10px;font-weight:700;padding:2px 8px;
+  border-radius:4px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.qj-fix{padding:10px 16px 14px;font-size:12px;color:#92400e;
+  background:#fffbeb;border-top:1px solid #fde68a}
+
 /* Footer */
 .footer{text-align:center;color:#94a3b8;font-size:12px;padding:18px}
 """
 
     # ── Section renderers ─────────────────────────────────────────────────────
+
+    def _quality_card(self, quality: Optional[Dict]) -> str:
+        """Render the Ingestion Quality Judge score card as an HTML section."""
+        if not quality:
+            return ""
+
+        score    = quality.get("overall_score", 0)
+        decision = quality.get("decision", "PROCEED")
+        dims     = quality.get("dimensions", [])
+        top_fix  = _html.escape(quality.get("top_fix_hint", ""))
+        lang     = _html.escape(quality.get("primary_language", ""))
+
+        dec_color = {"PROCEED": "#16a34a", "WARN": "#ca8a04", "ABORT": "#dc2626"}.get(decision, "#6b7280")
+        dec_bg    = {"PROCEED": "#f0fdf4", "WARN": "#fefce8", "ABORT": "#fef2f2"}.get(decision, "#f9fafb")
+        dec_icon  = {"PROCEED": "✓", "WARN": "⚠", "ABORT": "✗"}.get(decision, "")
+
+        # Score ring (simple CSS circle)
+        ring_color = dec_color
+
+        dim_rows = []
+        for d in dims:
+            st = d.get("status", "SKIP")
+            st_color = {"PASS": "#16a34a", "WARN": "#ca8a04", "FAIL": "#dc2626", "SKIP": "#94a3b8"}.get(st, "#6b7280")
+            st_bg    = {"PASS": "#f0fdf4", "WARN": "#fefce8", "FAIL": "#fef2f2", "SKIP": "#f8fafc"}.get(st, "#f9fafb")
+            bar_pct  = d.get("score", 0)
+            bar_col  = st_color
+            dim_rows.append(
+                f'<div class="qj-dim-row">'
+                f'<span class="qj-dim-id">{_html.escape(d.get("id",""))}</span>'
+                f'<span class="qj-dim-name">{_html.escape(d.get("name",""))}</span>'
+                f'<div class="qj-bar-wrap"><div class="qj-bar" style="width:{bar_pct}%;background:{bar_col}30;'
+                f'border-left:3px solid {bar_col}"></div></div>'
+                f'<span class="qj-dim-msg">{_html.escape(d.get("message",""))}</span>'
+                f'<span class="qj-status-chip" style="background:{st_bg};color:{st_color}">{st}</span>'
+                f'</div>'
+            )
+
+        fix_html = (
+            f'<div class="qj-fix">&#128161; <strong>Top fix:</strong> {top_fix}</div>'
+            if top_fix and decision != "PROCEED" else ""
+        )
+
+        return f"""
+<!-- ── Ingestion Quality Judge ── -->
+<div class="section">
+  <div class="section-header">
+    <span class="icon">🔬</span>Ingestion Quality Judge
+    <span class="section-meta">Step 1k+2{f" · {lang} thresholds" if lang and lang != "default" else ""}</span>
+  </div>
+  <div class="qj-body">
+    <div class="qj-score-wrap">
+      <div class="qj-score-ring" style="border-color:{ring_color}">
+        <div class="qj-score-num" style="color:{ring_color}">{score}</div>
+        <div class="qj-score-sub">/ 100</div>
+      </div>
+      <div class="qj-decision" style="background:{dec_bg};color:{dec_color}">
+        {dec_icon}&nbsp;{decision}
+      </div>
+    </div>
+    <div class="qj-dims">
+      {"".join(dim_rows)}
+    </div>
+  </div>
+  {fix_html}
+</div>"""
 
     def _sev_cards(self, by_sev: Dict, total: int) -> str:
         parts = []

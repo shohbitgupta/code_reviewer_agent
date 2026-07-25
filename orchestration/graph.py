@@ -18,7 +18,7 @@ the pipeline on failure.  Successful stages write their own state keys.
 
 Usage::
 
-    pipeline = ReviewPipeline(llm_client=anthropic.Anthropic())
+    pipeline = ReviewPipeline(llm_client=LLMClientFactory.create())
     final_state = pipeline.run(state)
     # final_state["report_path"] → path to the HTML report
 """
@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,8 @@ class ReviewPipeline:
     Sequential 5-stage code-review pipeline.
 
     Args:
-        llm_client:     anthropic.Anthropic() sync client.  Required for
-                        Stage 3 (review) and Stage 4 (comment polish).
+        llm_client:     UnifiedLLMClient from LLMClientFactory (sync).  Required
+                        for Stage 3 (review) and Stage 4 (comment polish).
                         If None, those stages run in template-only mode.
         embed_tool:     EmbeddingTool instance (created from config if None).
         qdrant_tool:    QdrantTool instance (created from config if None).
@@ -131,6 +131,30 @@ class ReviewPipeline:
 
     def _run_review(self, state: Dict) -> Dict:
         from stage3_review.agent import run_review
+
+        quality = state.get("ingestion_quality")
+        if quality is not None and quality.decision == "ABORT":
+            logger.warning(
+                "[Pipeline] Stage 3 ABORTED — ingestion quality score=%d (<50). "
+                "Top fix: %s",
+                quality.overall_score,
+                quality.top_fix_hint,
+            )
+            state["issues"]       = []
+            state["review_stats"] = {
+                "aborted_by_quality_judge": True,
+                "ingestion_score":          quality.overall_score,
+            }
+            return state
+
+        if quality is not None and quality.decision == "WARN":
+            logger.warning(
+                "[Pipeline] Stage 3 proceeding with WARNING — ingestion score=%d. "
+                "Top fix: %s",
+                quality.overall_score,
+                quality.top_fix_hint,
+            )
+
         return run_review(
             state,
             llm_client = self._llm,

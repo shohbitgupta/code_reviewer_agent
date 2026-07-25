@@ -33,7 +33,7 @@ Usage:
     from stage4_comments.agent import run_comments
 
     state = run_comments(state, platform="github")
-    state = run_comments(state, platform="github", llm_client=anthropic.Anthropic())
+    state = run_comments(state, platform="github", llm_client=LLMClientFactory.create())
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ def run_comments(
     Args:
         state:               Shared ReviewState dict.
         platform:            "github" | "gitlab" | "jira" | "text".
-        llm_client:          anthropic.Anthropic() sync client.
+        llm_client:          UnifiedLLMClient from LLMClientFactory (sync).
                              If None, the LLM polish step is skipped for all
                              groups (formatter output used directly).
         skip_polish:         Force-skip LLM polish even if llm_client provided.

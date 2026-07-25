@@ -17,7 +17,13 @@ Modes
 
 Environment variables
 ─────────────────────
-    ANTHROPIC_API_KEY   — required for Stage 3 review + Stage 4 polish
+    MODEL_TYPE          — FREE | OPENAI | ANTHROPIC (default: ANTHROPIC)
+    MODEL_NAME          — override model ID for the selected provider
+    ZHIPUAI_API_KEY     — API key when MODEL_TYPE=FREE (ZhipuAI GLM)
+    OPENAI_API_KEY      — API key when MODEL_TYPE=OPENAI
+    ANTHROPIC_API_KEY   — API key when MODEL_TYPE=ANTHROPIC (default)
+    LLM_API_KEY         — universal fallback key (checked after provider key)
+    LLM_BASE_URL        — override base URL for OpenAI-compatible endpoints
     GITHUB_TOKEN        — required for private repos + PR comment posting
     VOYAGE_API_KEY      — for Voyage embeddings (default backend)
     QDRANT_URL          — defaults to http://localhost:6333
@@ -136,10 +142,14 @@ def _run_full_review(args, dry: bool) -> None:
     llm_client = None
     if not dry:
         try:
-            import anthropic
-            llm_client = anthropic.Anthropic()
+            from tools.llm_client import LLMClientFactory
+            llm_client = LLMClientFactory.create()
+            logger.info(
+                "LLM client: provider=%s  model=%s",
+                llm_client.provider, llm_client.model_name,
+            )
         except Exception as exc:
-            logger.warning("Could not create Anthropic client (%s) — LLM steps skipped", exc)
+            logger.warning("Could not create LLM client (%s) — LLM steps skipped", exc)
 
     # If a PR number is given, fetch base/head SHA from GitHub before ingestion
     base_sha = head_sha = None

@@ -22,7 +22,6 @@ Usage (sync entry point for pipeline):
 import asyncio
 import json
 import logging
-import os
 import time
 from typing import List, Optional
 
@@ -197,14 +196,6 @@ class SummaryGenerator:
     def _get_async_client(self):
         if self._client is not None:
             return self._client
-        try:
-            import anthropic  # pip install anthropic
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise RuntimeError("ANTHROPIC_API_KEY env var is not set.")
-            self._client = anthropic.AsyncAnthropic(api_key=api_key)
-            return self._client
-        except ImportError as exc:
-            raise ImportError(
-                "anthropic package not installed. Run: pip install anthropic"
-            ) from exc
+        from tools.llm_client import LLMClientFactory
+        self._client = LLMClientFactory.create_async()
+        return self._client

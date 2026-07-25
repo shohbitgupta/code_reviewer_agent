@@ -50,7 +50,7 @@ State keys produced
 Usage:
     from stage3_review.agent import run_review
 
-    state = run_review(state, llm_client=anthropic.Anthropic())
+    state = run_review(state, llm_client=LLMClientFactory.create())
 """
 
 from __future__ import annotations
@@ -60,8 +60,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
-
-import anthropic
 
 from stage2_standards.agent import build_review_prompt_rules, Rule
 from core.models import CodeChunk, ChunkType, ReviewIssue, RuleViolation
@@ -98,7 +96,7 @@ def run_review(
 
     Args:
         state:       Shared ReviewState dict (see module docstring).
-        llm_client:  anthropic.Anthropic() sync client.  Created from env if None.
+        llm_client:  UnifiedLLMClient from LLMClientFactory.  Created from env if None.
         qdrant_tool: Optional QdrantTool for dense-vector similarity search.
         skip_llm:    If True, only emit pre-flagged violations (no API calls).
 
@@ -146,7 +144,8 @@ def run_review(
 
     # ── 3. Instantiate shared helpers ─────────────────────────────────────────
     if llm_client is None:
-        llm_client = anthropic.Anthropic()
+        from tools.llm_client import LLMClientFactory
+        llm_client = LLMClientFactory.create()
 
     ctx_builder  = ContextBuilder(chunk_map, dep_graph, qdrant_tool, bm25_index)
     prompt_builder = PromptBuilder()
@@ -299,7 +298,7 @@ def _review_chunk(
     )
 
     # LLM call (may return cached result)
-    raw_issues = reviewer.review(
+    raw_issues, was_cached = reviewer.review(
         system_prompt = SYSTEM_PROMPT,
         user_prompt   = user_prompt,
         chunk         = chunk,
@@ -328,5 +327,4 @@ def _review_chunk(
             layer       = chunk.layer,
         ))
 
-    was_cached = False  # LLMReviewer logs cache hits internally
     return issues, was_cached

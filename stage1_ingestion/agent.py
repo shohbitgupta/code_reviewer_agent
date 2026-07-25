@@ -102,6 +102,8 @@ def run_ingestion(
             "changed_chunk_ids": result.changed_chunk_ids,
             # Priority 3 — hybrid retrieval: path to BM25 index file
             "bm25_index_path":   result.bm25_index_path,
+            # Step 1k+2 — quality gate for Stage 3
+            "ingestion_quality": result.quality_report,
         }
 
     except Exception as exc:

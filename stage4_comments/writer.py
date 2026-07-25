@@ -22,7 +22,7 @@ the writer is called multiple times for the same group (e.g. retry path).
 
 Usage::
 
-    writer = CommentWriter(llm_client=anthropic.Anthropic(), platform="github")
+    writer = CommentWriter(llm_client=LLMClientFactory.create(), platform="github")
     comments = writer.polish(formatter_outputs, chunk_map)
     # Returns List[ReviewComment] with .polished=True on LLM-touched entries.
 """
@@ -98,8 +98,8 @@ class CommentWriter:
     final ReviewComment objects for all groups.
 
     Args:
-        llm_client:    anthropic.Anthropic() sync client; may be None (skips
-                       LLM polish, falls back to formatter output for all).
+        llm_client:    UnifiedLLMClient from LLMClientFactory (sync); may be None
+                       (skips LLM polish, falls back to formatter output for all).
         platform:      Target platform string — passed into the polish prompt.
         model:         Anthropic model ID (defaults to config.REVIEW_MODEL).
         max_concurrency: BoundedSemaphore size for parallel polish calls.

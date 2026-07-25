@@ -15,8 +15,8 @@ The cache is keyed by md5(chunk.content) + md5(sorted rule_ids) so:
 
 Usage::
 
-    reviewer = LLMReviewer(llm_client=anthropic.Anthropic())
-    raw = reviewer.review(system_prompt, user_prompt, chunk, relevant_rules)
+    reviewer = LLMReviewer(llm_client=LLMClientFactory.create())
+    raw, was_cached = reviewer.review(system_prompt, user_prompt, chunk, relevant_rules)
     # raw → List[dict]  (validated tool_use input)
 """
 
@@ -89,7 +89,7 @@ class LLMReviewer:
     Thread-safe LLM reviewer.
 
     Args:
-        llm_client:    anthropic.Anthropic() sync client.
+        llm_client:    UnifiedLLMClient from LLMClientFactory (sync).
         model:         Model ID (default: config.REVIEW_MODEL).
         max_tokens:    Max tokens in the completion (default 1024).
         max_concurrency: Max simultaneous LLM requests (default 8).
@@ -123,9 +123,9 @@ class LLMReviewer:
         user_prompt:   str,
         chunk:         CodeChunk,
         rule_ids:      List[str],
-    ) -> List[Dict]:
+    ) -> tuple:
         """
-        Review one chunk.  Returns a list of raw issue dicts (tool_use input).
+        Review one chunk.  Returns (raw_issue_dicts, was_cached).
 
         Thread-safe: multiple WorkerPool threads can call this concurrently.
         The semaphore limits actual API concurrency; the cache is lock-guarded.
@@ -138,13 +138,13 @@ class LLMReviewer:
                 "[LLMReviewer] Cache hit for %s:%s",
                 chunk.file_path, chunk.symbol_name,
             )
-            return cached
+            return cached, True
 
         with self._semaphore:
             raw = self._call_with_retry(system_prompt, user_prompt, chunk)
 
         self._save_cache(cache_key, raw)
-        return raw
+        return raw, False
 
     # ── Private: API call + retry ─────────────────────────────────────────────
 

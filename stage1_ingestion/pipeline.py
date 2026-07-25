@@ -53,6 +53,8 @@ class IngestionPipelineResult:
     changed_chunk_ids: Optional[set] = None  # chunk_ids from changed files; None = full run
     # Priority 3 — hybrid retrieval
     bm25_index_path:  Optional[str] = None   # path to persisted BM25 index
+    # Step 1k+2 — Quality Judge report
+    quality_report:   object        = None   # IngestionQualityReport
 
 
 class IngestionPipeline:
@@ -387,6 +389,17 @@ class IngestionPipeline:
         qm = _compute_quality_metrics(file_metas, parsed_files, chunks, edges)
         _print_quality_metrics(qm)
 
+        # ── Step 1k+2: Ingestion Quality Judge ───────────────────────────────
+        logger.info("=== Step 1k+2: Ingestion Quality Judge ===")
+        from stage1_ingestion.quality_judge import IngestionQualityJudge
+        quality_report = IngestionQualityJudge().score(
+            qm          = qm,
+            stats       = stats,
+            chunks      = chunks,
+            dep_graph   = dep_graph,
+            skip_qdrant = skip_qdrant,
+        )
+
         return IngestionPipelineResult(
             local_repo_path   = clone_result.local_repo_path,
             file_metas        = file_metas,
@@ -400,6 +413,7 @@ class IngestionPipeline:
             quality_metrics   = qm,
             changed_chunk_ids = changed_chunk_ids,
             bm25_index_path   = bm25_index_path,
+            quality_report    = quality_report,
         )
 
 
