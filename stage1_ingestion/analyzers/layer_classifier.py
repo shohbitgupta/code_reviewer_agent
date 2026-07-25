@@ -15,51 +15,99 @@ from core.models import ParsedFile
 from stage1_ingestion.symbol_table import ProjectSymbolTable, SymbolEntry
 
 
-# ── Layer → base class name set ───────────────────────────────────────────────
+# ── Layer -> base class name set ──────────────────────────────────────────────
 
 BASE_CLASS_LAYERS: Dict[str, Set[str]] = {
     "presentation": {
         "StatefulWidget", "StatelessWidget", "ConsumerWidget", "HookWidget",
         "Activity", "AppCompatActivity", "ComponentActivity", "FragmentActivity",
         "Fragment", "DialogFragment", "BottomSheetDialogFragment",
-        "ViewController", "UIViewController", "UIView",
+        "ViewController", "UIViewController", "UIView", "UITableViewController",
+        "UICollectionViewController", "UITabBarController", "UINavigationController",
+        "UITableViewCell", "UICollectionViewCell", "UIControl",
     },
     "domain": {
         "ViewModel", "AndroidViewModel", "StateNotifier", "ChangeNotifier",
         "Bloc", "Cubit", "GetxController",
-        "Interactor", "UseCase",
+        "Interactor", "UseCase", "NSObject",
     },
     "data": {
         "Repository", "DataSource", "Dao", "ApiService",
         "RoomDatabase", "ContentProvider",
         "Worker", "CoroutineWorker",
+        "URLSession", "NSURLSession",
     },
 }
 
-# ── Layer → directory-segment set (matched against ALL path parts) ────────────
+# ── Layer -> directory-segment set (matched against ALL path parts) ───────────
 
 PATH_LAYERS: Dict[str, Set[str]] = {
     "presentation": {
         "screens", "screen", "ui", "views", "view", "pages", "page",
         "widgets", "widget", "components", "component",
-        "activities", "fragments", "viewcontrollers",
+        "activities", "fragments", "viewcontrollers", "viewcontroller",
+        "customviews", "customview", "cells", "tableviewcells",
+        "collectionviewcells", "controllers", "storyboards", "xibs",
     },
     "domain": {
         "services", "service", "usecases", "usecase", "domain",
         "interactors", "interactor", "blocs", "bloc", "cubits", "cubit",
-        "viewmodels", "viewmodel",
+        "viewmodels", "viewmodel", "managers", "manager",
+        "contactsmodule", "module", "modules", "features", "feature",
     },
     "data": {
         "models", "model", "repositories", "repository",
         "db", "database", "api", "network", "remote", "local",
         "datasources", "datasource", "dao",
+        "networkmanager", "networkservice", "networking",
+        "networkservicemanager",
     },
     "infrastructure": {
         "utils", "util", "helpers", "helper", "config", "configs",
         "constants", "constant", "di", "injection",
         "extensions", "extension",
+        "utility", "utilities", "common", "shared", "base",
+        "appdelegate", "scenedelegate", "resources", "assets",
     },
 }
+
+# ── iOS filename-suffix -> layer ───────────────────────────────────────────────
+# Applied to the stem (filename without extension) when path-segment rules miss.
+
+_IOS_SUFFIX_LAYERS: List[tuple] = [
+    # presentation
+    ("ViewController",          "presentation"),
+    ("TableViewController",     "presentation"),
+    ("CollectionViewController","presentation"),
+    ("TabBarController",        "presentation"),
+    ("View",                    "presentation"),
+    ("Cell",                    "presentation"),
+    ("Control",                 "presentation"),
+    ("Coordinator",             "presentation"),
+    ("Router",                  "presentation"),
+    # domain
+    ("ViewModel",               "domain"),
+    ("Presenter",               "domain"),
+    ("Interactor",              "domain"),
+    ("UseCase",                 "domain"),
+    ("Manager",                 "domain"),
+    ("Service",                 "domain"),
+    # data
+    ("Repository",              "data"),
+    ("DataSource",              "data"),
+    ("APIClient",               "data"),
+    ("NetworkManager",          "data"),
+    ("Parser",                  "data"),
+    ("Mapper",                  "data"),
+    # infrastructure
+    ("AppDelegate",             "infrastructure"),
+    ("SceneDelegate",           "infrastructure"),
+    ("Utility",                 "infrastructure"),
+    ("Helper",                  "infrastructure"),
+    ("Extension",               "infrastructure"),
+    ("Constants",               "infrastructure"),
+    ("Config",                  "infrastructure"),
+]
 
 # Pre-compute the inverse mapping: base_class_name → layer (for fast lookup).
 _BASE_TO_LAYER: Dict[str, str] = {
@@ -146,6 +194,9 @@ class LayerClassifier:
         # Rule 2 — directory path segments (supplement, not override)
         matched.update(self._layers_from_path(file_path))
 
+        # Rule 3 — iOS filename suffix patterns (catches Manager, Service, etc.)
+        matched.update(self._layers_from_ios_suffix(file_path))
+
         if not matched:
             return ["unknown"]
 
@@ -202,6 +253,22 @@ class LayerClassifier:
             hit = _SEGMENT_TO_LAYER.get(segment)
             if hit:
                 matched.add(hit)
+        return matched
+
+    @staticmethod
+    def _layers_from_ios_suffix(file_path: str) -> Set[str]:
+        """
+        Match iOS/macOS filename suffix conventions to architectural layers.
+
+        The stem (filename without extension) is checked against each suffix in
+        _IOS_SUFFIX_LAYERS in order.  Longest matching suffix wins per file.
+        """
+        stem = file_path.replace("\\", "/").split("/")[-1].rsplit(".", 1)[0]
+        matched: Set[str] = set()
+        for suffix, layer in _IOS_SUFFIX_LAYERS:
+            if stem.endswith(suffix):
+                matched.add(layer)
+                break  # first (longest) match wins; list is ordered by specificity
         return matched
 
     # Keep old single-value helpers as thin wrappers for any remaining callers.

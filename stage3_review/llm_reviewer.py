@@ -101,7 +101,7 @@ class LLMReviewer:
         self,
         llm_client,
         model:           str            = config.REVIEW_MODEL,
-        max_tokens:      int            = 1024,
+        max_tokens:      int            = 1500,
         max_concurrency: int            = 8,
         cache_dir:       Optional[Path] = None,
     ) -> None:
@@ -123,14 +123,20 @@ class LLMReviewer:
         user_prompt:   str,
         chunk:         CodeChunk,
         rule_ids:      List[str],
+        model:         str = "",
     ) -> tuple:
         """
         Review one chunk.  Returns (raw_issue_dicts, was_cached).
 
+        Args:
+            model: Override the instance model for this call (O1 tiering).
+                   Empty string = use the instance default (self._model).
+
         Thread-safe: multiple WorkerPool threads can call this concurrently.
         The semaphore limits actual API concurrency; the cache is lock-guarded.
         """
-        cache_key = self._make_cache_key(chunk, rule_ids)
+        effective_model = model or self._model
+        cache_key = self._make_cache_key(chunk, rule_ids, effective_model)
 
         cached = self._load_cache(cache_key)
         if cached is not None:
@@ -141,7 +147,7 @@ class LLMReviewer:
             return cached, True
 
         with self._semaphore:
-            raw = self._call_with_retry(system_prompt, user_prompt, chunk)
+            raw = self._call_with_retry(system_prompt, user_prompt, chunk, effective_model)
 
         self._save_cache(cache_key, raw)
         return raw, False
@@ -153,6 +159,7 @@ class LLMReviewer:
         system_prompt: str,
         user_prompt:   str,
         chunk:         CodeChunk,
+        model:         str = "",
     ) -> List[Dict]:
         """Exponential-backoff retry for transient API errors."""
         last_exc: Optional[Exception] = None
@@ -160,7 +167,7 @@ class LLMReviewer:
 
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
-                return self._call_once(system_prompt, user_prompt)
+                return self._call_once(system_prompt, user_prompt, model)
             except Exception as exc:
                 last_exc = exc
                 status = getattr(exc, "status_code", None)
@@ -189,10 +196,10 @@ class LLMReviewer:
         )
         raise last_exc  # type: ignore[misc]
 
-    def _call_once(self, system_prompt: str, user_prompt: str) -> List[Dict]:
-        """Single Anthropic messages.create() call.  Extracts tool_use result."""
+    def _call_once(self, system_prompt: str, user_prompt: str, model: str = "") -> List[Dict]:
+        """Single messages.create() call.  Extracts tool_use result."""
         response = self._client.messages.create(
-            model      = self._model,
+            model      = model or self._model,
             max_tokens = self._max_tokens,
             system     = system_prompt,
             messages   = [{"role": "user", "content": user_prompt}],
@@ -211,18 +218,20 @@ class LLMReviewer:
     # ── Private: content-hash cache ───────────────────────────────────────────
 
     @staticmethod
-    def _make_cache_key(chunk: CodeChunk, rule_ids: List[str]) -> str:
+    def _make_cache_key(chunk: CodeChunk, rule_ids: List[str], model: str = "") -> str:
         """
-        Stable cache key = md5(chunk content) + md5(sorted rule_ids).
+        Stable cache key = md5(chunk content) + md5(sorted rule_ids) + model tag.
 
         Content-based: if the source changes, the key changes.
         Rules-based:   if standards are updated, old entries are bypassed.
+        Model-based:   fast vs full model results are stored separately (O1).
         """
         content_hash = hashlib.md5(chunk.content.encode()).hexdigest()
         rules_hash   = hashlib.md5(
             ",".join(sorted(rule_ids)).encode()
         ).hexdigest()[:8]
-        return f"{content_hash}_{rules_hash}"
+        model_tag    = model.split("/")[-1][:12] if model else ""
+        return f"{content_hash}_{rules_hash}_{model_tag}"
 
     def _cache_path(self, key: str) -> Optional[Path]:
         if self._cache_dir is None:

@@ -70,8 +70,9 @@ class SwiftTsParser(TreeSitterParser):
 
     @classmethod
     def _load_language(cls):
-        from tree_sitter_languages import get_language
-        return get_language("swift")
+        import tree_sitter_swift
+        from tree_sitter import Language
+        return Language(tree_sitter_swift.language())
 
     def _extract_symbols(
         self,
@@ -100,8 +101,7 @@ class SwiftTsParser(TreeSitterParser):
             for group in groups:
                 start = group[0][0]
                 end   = group[-1][1]
-                paths = [self._node_text(n, source_bytes).replace("import", "").strip()
-                         for _, _, n in group]
+                paths = [n.replace("import", "").strip() for _, _, n in group]
                 symbols.append(ParsedSymbol(
                     symbol_type = "import",
                     name        = "imports",
@@ -213,9 +213,15 @@ class SwiftTsParser(TreeSitterParser):
         """Extract base class / protocol names from a type declaration."""
         bases: List[str] = []
         for child in node.children:
-            if child.type in ("type_inheritance_clause", "type_constraints"):
+            if child.type == "inheritance_specifier":
+                # tree-sitter-swift 0.7+: one node per base type
+                text = self._node_text(child, source_bytes).strip()
+                name = text.split("<")[0].strip()
+                if name:
+                    bases.append(name)
+            elif child.type in ("type_inheritance_clause", "type_constraints"):
+                # Older grammar fallback: single comma-separated clause
                 text = self._node_text(child, source_bytes)
-                # Strip leading colon and commas; strip generic args
                 raw = text.lstrip(":").strip()
                 for part in raw.split(","):
                     name = part.strip().split("<")[0].strip()

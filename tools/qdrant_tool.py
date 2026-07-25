@@ -142,18 +142,18 @@ class QdrantTool:
             for chunk, vec in zip(batch, vectors):
                 chunk.embedding = vec
 
-            # Build Qdrant points
-            points = [
-                PointStruct(
+            # Build Qdrant points — omit summary_vector when None (skip-summaries mode).
+            # Newer qdrant-client rejects None values in the named-vector dict.
+            points = []
+            for chunk in batch:
+                vec = {"code_vector": chunk.embedding}
+                if chunk.summary_embedding is not None:
+                    vec["summary_vector"] = chunk.summary_embedding
+                points.append(PointStruct(
                     id      = chunk.chunk_id,
-                    vector  = {
-                        "code_vector":    chunk.embedding,
-                        "summary_vector": chunk.summary_embedding,  # None if deferred
-                    },
+                    vector  = vec,
                     payload = chunk.to_qdrant_payload(),
-                )
-                for chunk in batch
-            ]
+                ))
 
             client.upsert(collection_name=self.collection, points=points)
             total += len(batch)
@@ -251,6 +251,50 @@ class QdrantTool:
             with_payload    = True,
         )
         return [r.payload for r in results[0]]
+
+    def get_existing_content_hashes(
+        self,
+        chunk_ids:  List[str],
+        batch_size: int = 500,
+    ) -> Dict[str, str]:
+        """
+        O4 — Incremental upsert helper.
+
+        Fetches the stored content_hash for every chunk_id that already exists
+        in the collection.  IDs not found in Qdrant are simply absent from the
+        returned dict.
+
+        Args:
+            chunk_ids:  UUIDs to look up (may be empty).
+            batch_size: IDs per retrieve call (Qdrant default limit is 1000).
+
+        Returns:
+            {chunk_id: content_hash} for all IDs currently in the collection.
+        """
+        if not chunk_ids:
+            return {}
+
+        client = self._get_client()
+        result: Dict[str, str] = {}
+
+        for i in range(0, len(chunk_ids), batch_size):
+            batch = chunk_ids[i : i + batch_size]
+            try:
+                records = client.retrieve(
+                    collection_name = self.collection,
+                    ids             = batch,
+                    with_payload    = True,
+                )
+                for r in records:
+                    if r.payload:
+                        result[str(r.id)] = r.payload.get("content_hash", "")
+            except Exception as exc:
+                logger.warning(
+                    "[QdrantTool] get_existing_content_hashes batch %d failed: %s",
+                    i // batch_size, exc,
+                )
+
+        return result
 
     def patch_summary_vector(self, chunk_id: str, summary: str, embedding: List[float]) -> None:
         """

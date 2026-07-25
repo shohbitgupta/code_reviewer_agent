@@ -1,42 +1,91 @@
 """
-Swift language parser — regex heuristics.
+Swift language parser -- regex heuristics.
 
 Extracts:
-  - import statements  → grouped import symbol
-  - class / struct / enum / protocol declarations → class_head symbol
-  - func declarations  → function or method symbol (inside class = method)
+  - import statements       -> grouped import symbol
+  - class/struct/enum/...   -> class_head symbol
+  - func declarations       -> function or method symbol
+  - call sites in bodies    -> ParsedSymbol.calls list (feeds IQ-03 call resolution)
 
 Upgrade path: replace regex with tree-sitter-swift when available.
 """
-
 import logging
 import re
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set
 
 from core.models import ParsedSymbol
 from stage1_ingestion.parsers.base import BaseParser
 
 logger = logging.getLogger(__name__)
 
-# Matches Swift import lines
+# ── Lexical patterns ──────────────────────────────────────────────────────────
+
 _IMPORT_RE = re.compile(r"^import\s+\w+")
+_WHERE_RE   = re.compile(r"^\s*where\s+(.*)")
 
-# Matches a Swift `where` clause line: "where T: Codable, U: Equatable"
-_WHERE_RE = re.compile(r"^\s*where\s+(.*)")
-
-# Matches class, struct, enum, protocol, actor declarations
 _TYPE_RE = re.compile(
     r"^(?:public\s+|private\s+|internal\s+|open\s+|fileprivate\s+)?"
     r"(?:final\s+)?(?:class|struct|enum|protocol|actor)\s+(\w+)"
     r"(?:\s*:\s*([\w,\s]+))?"
 )
 
-# Matches func declarations (handles generic type params)
 _FUNC_RE = re.compile(
     r"^(?:public\s+|private\s+|internal\s+|open\s+|fileprivate\s+)?"
     r"(?:static\s+|class\s+)?(?:override\s+)?(?:mutating\s+)?(?:async\s+)?"
     r"func\s+(\w+)\s*[<(]"
 )
+
+# ── Call-site extraction patterns ─────────────────────────────────────────────
+
+# Swift keywords that syntactically look like calls but aren't
+_KEYWORDS: Set[str] = {
+    "if", "for", "while", "guard", "switch", "catch", "return",
+    "throw", "try", "await", "defer", "repeat", "where", "print",
+    "super", "self", "init",
+}
+
+# self.method( -- captures the method name
+_SELF_CALL_RE = re.compile(r"\bself\.([a-z_][a-zA-Z0-9_]*)\s*[<(]")
+# TypeName.method( -- captures the method name (first char lowercase)
+_TYPE_CALL_RE = re.compile(r"\b[A-Z][a-zA-Z0-9_]*\.([a-z_][a-zA-Z0-9_]*)\s*[<(]")
+# Standalone call: word( not preceded by . or another word char
+_BARE_CALL_RE = re.compile(r"(?<![.\w])([a-z_][a-zA-Z0-9_]+)\s*\(")
+
+
+def _extract_calls(body_lines: List[str]) -> List[str]:
+    """
+    Scan the body of a function for call sites and return unique callee names.
+
+    Recognises three patterns:
+      self.method(...)     -> "method"
+      TypeName.method(...) -> "method"
+      bareFunction(...)    -> "bareFunction"
+
+    Filters out Swift keywords and single-letter names.
+    """
+    seen: Set[str] = set()
+
+    for line in body_lines:
+        stripped = line.strip()
+        if stripped.startswith("//") or stripped.startswith("*"):
+            continue  # skip comments
+
+        for m in _SELF_CALL_RE.finditer(line):
+            name = m.group(1)
+            if name not in _KEYWORDS and len(name) > 1:
+                seen.add(name)
+
+        for m in _TYPE_CALL_RE.finditer(line):
+            name = m.group(1)
+            if name not in _KEYWORDS and len(name) > 1:
+                seen.add(name)
+
+        for m in _BARE_CALL_RE.finditer(line):
+            name = m.group(1)
+            if name not in _KEYWORDS and len(name) > 2:
+                seen.add(name)
+
+    return sorted(seen)
 
 
 class SwiftParser(BaseParser):
@@ -60,6 +109,7 @@ class SwiftParser(BaseParser):
         ]
         if not import_lines:
             return []
+
         groups, current = [], [import_lines[0]]
         for ln in import_lines[1:]:
             if ln <= current[-1] + 2:
@@ -84,22 +134,20 @@ class SwiftParser(BaseParser):
 
     def _types_and_funcs(self, source: str, raw_lines: List[str]) -> List[ParsedSymbol]:
         symbols: List[ParsedSymbol] = []
-        current_type: Optional[str] = None   # track enclosing type name
+        current_type: Optional[str] = None
 
         for i, line in enumerate(raw_lines):
-            lineno      = i + 1
-            stripped    = line.strip()
+            lineno   = i + 1
+            stripped = line.strip()
 
-            # Type declarations
+            # ── Type declarations ─────────────────────────────────────────────
             m = _TYPE_RE.match(stripped)
             if m:
-                name   = m.group(1)
-                bases  = [b.strip() for b in (m.group(2) or "").split(",") if b.strip()]
-                end    = self._find_block_end(raw_lines, lineno)
+                name  = m.group(1)
+                bases = [b.strip() for b in (m.group(2) or "").split(",") if b.strip()]
+                end   = self._find_block_end(raw_lines, lineno)
 
-                # Extract bases + where constraints from the declaration line itself.
-                # _TYPE_RE group 2 misses bases when generic params `<T>` appear first,
-                # so re-scan the stripped line for `: BaseClass` and `where T: Protocol`.
+                # Re-scan for `: BaseClass` when generic params hid group 2
                 colon_pos = stripped.find(":")
                 if colon_pos >= 0 and not bases:
                     inheritance_part = stripped[colon_pos + 1:].split("{")[0].strip()
@@ -119,18 +167,20 @@ class SwiftParser(BaseParser):
                 for look in raw_lines[lineno:min(lineno + 5, end)]:
                     wm = _WHERE_RE.match(look)
                     if wm:
-                        where_text = wm.group(1).split("{")[0]   # strip trailing {
+                        where_text  = wm.group(1).split("{")[0]
                         constraints = [c.strip() for c in where_text.split(",") if c.strip()]
                         for constraint in constraints:
                             parts = constraint.split(":")
                             if len(parts) == 2:
-                                bases.extend(p.strip().split("<")[0].strip()
-                                             for p in parts[1].split("&") if p.strip())
+                                bases.extend(
+                                    p.strip().split("<")[0].strip()
+                                    for p in parts[1].split("&") if p.strip()
+                                )
                         break
                     if "{" in look:
                         break
 
-                symbol = ParsedSymbol(
+                symbols.append(ParsedSymbol(
                     symbol_type = "class_head",
                     name        = name,
                     start_line  = lineno,
@@ -138,16 +188,18 @@ class SwiftParser(BaseParser):
                     source      = "\n".join(raw_lines[lineno - 1:min(lineno + 4, end)]),
                     parent_name = None,
                     bases       = bases,
-                )
-                symbols.append(symbol)
+                ))
                 current_type = name
                 continue
 
-            # Function declarations
+            # ── Function/method declarations ──────────────────────────────────
             m = _FUNC_RE.match(stripped)
             if m:
                 name = m.group(1)
                 end  = self._find_block_end(raw_lines, lineno)
+                body = raw_lines[lineno:end]          # lines inside the func body
+                calls = _extract_calls(body)
+
                 symbols.append(ParsedSymbol(
                     symbol_type = "method" if current_type else "function",
                     name        = name,
@@ -155,6 +207,7 @@ class SwiftParser(BaseParser):
                     end_line    = end,
                     source      = "\n".join(raw_lines[lineno - 1:end]),
                     parent_name = current_type,
+                    calls       = calls,
                 ))
 
         return symbols

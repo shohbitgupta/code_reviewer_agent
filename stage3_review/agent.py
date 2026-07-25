@@ -61,6 +61,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from core import config
 from stage2_standards.agent import build_review_prompt_rules, Rule
 from core.models import CodeChunk, ChunkType, ReviewIssue, RuleViolation
 from stage3_review.context_builder import ContextBuilder, format_context_for_prompt
@@ -73,8 +74,15 @@ logger = logging.getLogger(__name__)
 # ── Tuning constants ──────────────────────────────────────────────────────────
 MIN_REVIEW_LINES        = 3    # shorter chunks (trivial getters) are skipped
 BLAST_RADIUS_THRESHOLD  = 50   # chunks with ≥ this many dep edges get a note, not a full review
-_WORKER_THREADS         = 12   # ThreadPoolExecutor size
+_WORKER_THREADS         = 3    # GLM free tier: keep low to avoid throttling
 _REVIEW_CACHE_DIR       = Path("./workspace/review_cache")
+
+# ── O1: Security-sensitive path patterns → always use full model ──────────────
+_SECURITY_PATHS = frozenset({
+    "auth", "crypt", "token", "password", "secret", "jwt",
+    "oauth", "signin", "login", "session", "credential", "key",
+    "permission", "role", "access", "secure",
+})
 
 # Chunk types that carry real logic and benefit from LLM review
 _REVIEWABLE_TYPES: Set[ChunkType] = {
@@ -164,9 +172,11 @@ def run_review(
 
     # ── 5. Parallel LLM review ────────────────────────────────────────────────
     llm_issues: List[ReviewIssue] = []
-    stats_reviewed = 0
+    stats_reviewed   = 0
     stats_cache_hits = 0
-    stats_errors = 0
+    stats_errors     = 0
+    stats_fast_model = 0   # O1: chunks reviewed with FAST_MODEL
+    stats_full_model = 0   # O1: chunks reviewed with REVIEW_MODEL
 
     with ThreadPoolExecutor(max_workers=_WORKER_THREADS, thread_name_prefix="review") as pool:
         future_to_chunk = {
@@ -185,6 +195,11 @@ def run_review(
                 stats_reviewed += 1
                 if was_cached:
                     stats_cache_hits += 1
+                # O1: tally model tier usage
+                if _select_model(chunk) == config.FAST_MODEL:
+                    stats_fast_model += 1
+                else:
+                    stats_full_model += 1
             except Exception as exc:
                 stats_errors += 1
                 logger.error(
@@ -200,15 +215,18 @@ def run_review(
     # ── 7. Write state ────────────────────────────────────────────────────────
     elapsed = round(time.monotonic() - t_start, 2)
     stats = {
-        "chunks_total":    len(chunks),
-        "chunks_selected": len(to_review),
-        "chunks_reviewed": stats_reviewed,
-        "cache_hits":      stats_cache_hits,
-        "errors":          stats_errors,
-        "pre_flagged":     len(pre_flagged_issues),
-        "llm_found":       len(llm_issues),
-        "issues_total":    len(final_issues),
-        "elapsed_seconds": elapsed,
+        "chunks_total":      len(chunks),
+        "chunks_selected":   len(to_review),
+        "chunks_capped":     max(0, len(chunks) - len(to_review)),
+        "chunks_reviewed":   stats_reviewed,
+        "cache_hits":        stats_cache_hits,
+        "errors":            stats_errors,
+        "pre_flagged":       len(pre_flagged_issues),
+        "llm_found":         len(llm_issues),
+        "issues_total":      len(final_issues),
+        "model_fast_chunks": stats_fast_model,   # O1
+        "model_full_chunks": stats_full_model,   # O1
+        "elapsed_seconds":   elapsed,
     }
 
     critical_count = sum(1 for i in final_issues if i.severity == "CRITICAL")
@@ -265,7 +283,46 @@ def _select_chunks(
         else:
             priority3.append(chunk)
 
-    return priority1 + priority2 + priority3
+    # Within each priority group, sort by chunk complexity (line count desc)
+    # so the most complex chunks survive when the cap kicks in.
+    _complexity = lambda c: c.end_line - c.start_line + 1
+    priority1.sort(key=_complexity, reverse=True)
+    priority2.sort(key=_complexity, reverse=True)
+    priority3.sort(key=_complexity, reverse=True)
+
+    selected = priority1 + priority2 + priority3
+
+    # O2: apply MAX_REVIEW_CHUNKS cap (0 = disabled)
+    cap = config.MAX_REVIEW_CHUNKS
+    if cap > 0 and len(selected) > cap:
+        logger.info(
+            "[ReviewerAgent] Chunk cap: reviewing %d/%d chunks "
+            "(MAX_REVIEW_CHUNKS=%d, %d skipped by complexity rank)",
+            cap, len(selected), cap, len(selected) - cap,
+        )
+        selected = selected[:cap]
+
+    return selected
+
+
+def _select_model(chunk: CodeChunk) -> str:
+    """
+    O1 — Pick the LLM model for this chunk.
+
+    Full model (REVIEW_MODEL / Opus) when:
+      - chunk has any pre-flagged violations (mechanical checker already saw risk)
+      - chunk lives in a security-sensitive file path
+
+    Fast model (FAST_MODEL / Haiku) for everything else.
+    """
+    if chunk.pre_flagged_violations:
+        return config.REVIEW_MODEL
+
+    lower_path = chunk.file_path.lower()
+    if any(pat in lower_path for pat in _SECURITY_PATHS):
+        return config.REVIEW_MODEL
+
+    return config.FAST_MODEL
 
 
 def _review_chunk(
@@ -297,12 +354,16 @@ def _review_chunk(
         pre_flagged     = chunk.pre_flagged_violations,
     )
 
+    # O1: select fast vs full model based on chunk risk signals
+    model = _select_model(chunk)
+
     # LLM call (may return cached result)
     raw_issues, was_cached = reviewer.review(
         system_prompt = SYSTEM_PROMPT,
         user_prompt   = user_prompt,
         chunk         = chunk,
         rule_ids      = relevant_rule_ids,
+        model         = model,
     )
 
     # Convert raw dicts to ReviewIssue objects

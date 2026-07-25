@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 _DEFAULTS = {
     "FREE":       {
         "model":    "z-ai/glm-5.2-free",
-        "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+        "base_url": "https://api.tokenrouter.com/v1",
         "key_env":  "ZHIPUAI_API_KEY",
     },
     "OPENAI":     {

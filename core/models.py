@@ -274,11 +274,18 @@ class CodeChunk:
         obj.pre_flagged_violations = [RuleViolation(**v) for v in raw_violations]
         return obj
 
+    @property
+    def content_hash(self) -> str:
+        """MD5 of raw source content — used by incremental Qdrant upsert (O4)."""
+        import hashlib
+        return hashlib.md5(self.content.encode()).hexdigest()
+
     def to_qdrant_payload(self) -> dict:
         """
         Returns the Qdrant point payload (no vector fields).
 
         Fields marked with ★ are required for O(1) chunk expansion in Stage 3.
+        content_hash (★★) enables incremental upsert — skip re-embedding unchanged chunks.
         """
         return {
             "chunk_id":        self.chunk_id,        # ★
@@ -298,6 +305,7 @@ class CodeChunk:
             "layer":           self.layer,
             "layers":          self.layers,
             "violations":      [v.rule_id for v in self.pre_flagged_violations],
+            "content_hash":    self.content_hash,     # ★★ incremental upsert
         }
 
 

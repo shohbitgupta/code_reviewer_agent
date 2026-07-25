@@ -154,6 +154,126 @@ class MagicNumberRule(MechanicalRule):
         return violations[:3]   # cap at 3 per chunk to avoid noise
 
 
+_MAX_PARAMS = 5
+
+class LongParameterListRule(MechanicalRule):
+    """CP013 — Functions must not have more than 5 parameters."""
+
+    rule_id  = "CP013"
+    severity = "MEDIUM"
+    title    = "Long parameter list (> 5 parameters)"
+
+    def check(self, chunk: CodeChunk) -> List[RuleViolation]:
+        if chunk.chunk_type not in (ChunkType.FUNCTION, ChunkType.METHOD):
+            return []
+
+        # Scan the first 15 lines — where the signature lives even for multi-line sigs
+        sig_text = "\n".join(chunk.content.splitlines()[:15])
+        count = self._count_top_level_params(sig_text)
+
+        # Python methods: exclude `self` / `cls` from the caller-visible count
+        if chunk.language == "python" and chunk.chunk_type == ChunkType.METHOD:
+            count = max(0, count - 1)
+
+        if count <= _MAX_PARAMS:
+            return []
+
+        return [RuleViolation(
+            rule_id     = self.rule_id,
+            severity    = self.severity,
+            title       = self.title,
+            description = (
+                f"'{chunk.symbol_name}' has {count} parameters (limit {_MAX_PARAMS}). "
+                "Group related parameters into a data object or split the function "
+                "by responsibility."
+            ),
+            line = chunk.start_line,
+        )]
+
+    @staticmethod
+    def _count_top_level_params(text: str) -> int:
+        """
+        Count parameters by tracking parenthesis depth and tallying top-level commas.
+        Correctly handles nested generics, lambdas, and default-value expressions.
+        """
+        depth = 0
+        top_commas = 0
+        in_params = False
+        for ch in text:
+            if ch == "(":
+                depth += 1
+                if depth == 1:
+                    in_params = True
+            elif ch == ")":
+                if depth == 1 and in_params:
+                    # Check whether anything was between the parens
+                    break
+                depth -= 1
+            elif ch == "," and depth == 1:
+                top_commas += 1
+        if not in_params:
+            return 0
+        # 0 commas at depth=1 means either 0 or 1 params;
+        # we can't tell without inspecting content, so treat it as 1 (safe)
+        return top_commas + 1
+
+
+_NETWORK_CALL_RE = re.compile(
+    r"""(?x)
+    URLSession\s*\.          # URLSession.shared / URLSession(configuration:)
+  | URLRequest\s*\(          # URLRequest(url:)
+  | \.dataTask\s*\(          # .dataTask(with:)
+  | \.uploadTask\s*\(        # .uploadTask(with:)
+  | \.downloadTask\s*\(      # .downloadTask(with:)
+  | Alamofire\s*\.           # Alamofire.request / Alamofire.upload
+  | \bAF\s*\.request\s*\(    # AF.request(
+  | \bAF\s*\.upload\s*\(     # AF.upload(
+  | \bAF\s*\.download\s*\(   # AF.download(
+    """,
+)
+
+class CleanArchNetworkRule(MechanicalRule):
+    """SW008 — ViewControllers must not call URLSession or Alamofire directly."""
+
+    rule_id  = "SW008"
+    severity = "HIGH"
+    title    = "No direct network calls from ViewController (Clean Architecture)"
+
+    def check(self, chunk: CodeChunk) -> List[RuleViolation]:
+        if chunk.language != "swift":
+            return []
+        if chunk.chunk_type not in (ChunkType.FUNCTION, ChunkType.METHOD):
+            return []
+
+        # Determine whether this chunk lives inside a ViewController class.
+        in_viewcontroller = (
+            ("ViewController" in (chunk.parent_symbol or ""))
+            or ("ViewController" in chunk.file_path)
+        )
+        if not in_viewcontroller:
+            return []
+
+        violations = []
+        for i, line in enumerate(chunk.content.splitlines(), start=chunk.start_line):
+            stripped = line.strip()
+            if stripped.startswith("//"):
+                continue
+            if _NETWORK_CALL_RE.search(line):
+                violations.append(RuleViolation(
+                    rule_id     = self.rule_id,
+                    severity    = self.severity,
+                    title       = self.title,
+                    description = (
+                        f"Direct network call on line {i} inside a ViewController. "
+                        "Move this call to a dedicated service or repository class "
+                        "and inject it via a protocol — this keeps the UI layer "
+                        "decoupled from the network layer and testable without a live connection."
+                    ),
+                    line = i,
+                ))
+        return violations[:3]  # cap at 3 per chunk to avoid noise
+
+
 _TYPE_HINT_RE = re.compile(
     r"^\s*def\s+\w+\s*\(([^)]*)\)\s*(?:->|:)",
 )
@@ -221,16 +341,20 @@ class MechanicalRuleChecker:
             chunk.pre_flagged_violations = checker.check(chunk)
     """
 
+    _GOD_CLASS_MAX_METHODS = 10
+
     def __init__(self) -> None:
         self._rules: List[MechanicalRule] = [
             FunctionLengthRule(),
             HardcodedSecretRule(),
             MagicNumberRule(),
             MissingTypeHintRule(),
+            LongParameterListRule(),
+            CleanArchNetworkRule(),
         ]
 
     def check(self, chunk: CodeChunk) -> List[RuleViolation]:
-        """Run all rules against *chunk* and return the combined violation list."""
+        """Run all per-chunk rules against *chunk* and return the combined violation list."""
         violations: List[RuleViolation] = []
         for rule in self._rules:
             try:
@@ -239,9 +363,13 @@ class MechanicalRuleChecker:
                 pass   # a broken rule must never crash the pipeline
         return violations
 
-    def check_many(self, chunks: List[CodeChunk]) -> None:
+    def check_many(self, chunks: List[CodeChunk]) -> int:
         """
         In-place: set pre_flagged_violations on every chunk.
+
+        Two passes:
+          1. Per-chunk rules (all MechanicalRule subclasses above).
+          2. Class-level GodClass rule (CP012) — requires cross-chunk context.
 
         Skips MODULE and IMPORT chunks — they are structural, not behavioral.
         """
@@ -253,4 +381,47 @@ class MechanicalRuleChecker:
             chunk.pre_flagged_violations = self.check(chunk)
             if chunk.pre_flagged_violations:
                 flagged += 1
+
+        flagged += self._check_god_classes(chunks)
+        return flagged
+
+    def _check_god_classes(self, chunks: List[CodeChunk]) -> int:
+        """
+        CP012 — God Class detector.
+
+        Groups METHOD chunks by parent_symbol, flags any class whose public
+        method count exceeds _GOD_CLASS_MAX_METHODS.  The violation is stamped
+        on the CLASS_HEAD chunk (or the first method chunk as a fallback).
+        """
+        from collections import defaultdict
+
+        # Index class-head chunks and count methods per class
+        class_heads: dict = {}
+        method_counts: dict = defaultdict(list)
+
+        for chunk in chunks:
+            if chunk.chunk_type == ChunkType.CLASS_HEAD:
+                class_heads[chunk.symbol_name] = chunk
+            elif chunk.chunk_type == ChunkType.METHOD and chunk.parent_symbol:
+                method_counts[chunk.parent_symbol].append(chunk)
+
+        flagged = 0
+        for class_name, methods in method_counts.items():
+            if len(methods) <= self._GOD_CLASS_MAX_METHODS:
+                continue
+
+            target = class_heads.get(class_name, methods[0])
+            target.pre_flagged_violations.append(RuleViolation(
+                rule_id     = "CP012",
+                severity    = "HIGH",
+                title       = "God class: too many responsibilities",
+                description = (
+                    f"'{class_name}' has {len(methods)} methods "
+                    f"(limit {self._GOD_CLASS_MAX_METHODS}). "
+                    "Extract cohesive groups of methods into separate, focused classes."
+                ),
+                line = target.start_line,
+            ))
+            flagged += 1
+
         return flagged

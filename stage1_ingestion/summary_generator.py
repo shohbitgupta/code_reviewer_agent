@@ -63,7 +63,13 @@ class SummaryGenerator:
         model:       str = "claude-haiku-4-5-20251001",
     ):
         self.embed_tool = embed_tool
-        self.model      = model
+        # If a unified client is provided, inherit its resolved model name
+        # so we don't send a hardcoded Anthropic model ID to non-Anthropic endpoints.
+        self.model = (
+            llm_client.model_name
+            if llm_client and hasattr(llm_client, "model_name")
+            else model
+        )
         self._client    = llm_client  # lazy-initialised if None
 
     # ── Public API ────────────────────────────────────────────────────────────

@@ -286,11 +286,13 @@ def _split_symbol(
             return_type = sym.return_type       if is_first else None,
         ))
 
+        # Stop once we've reached the actual end — the old `start > real_end`
+        # check was dead code because start = real_end - overlap + 1 ≤ real_end.
+        if end >= real_end:
+            break
+
         start    = end - overlap + 1
         part_idx += 1
-
-        if start > real_end:
-            break
 
     return parts
 

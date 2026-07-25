@@ -31,6 +31,14 @@ Environment variables
 
 from __future__ import annotations
 
+# Load .env before any other imports so all os.getenv() calls see the values.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    from pathlib import Path as _Path
+    _load_dotenv(_Path(__file__).parent / ".env", override=False)
+except ImportError:
+    pass
+
 import argparse
 import logging
 import os

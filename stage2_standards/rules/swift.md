@@ -128,3 +128,31 @@ extension UserCell: Configurable {
     func configure(with user: User) { ... }
 }
 ```
+
+### SW008 — No Direct Network Calls from ViewControllers (Clean Architecture)
+- **Severity**: HIGH
+- **Language**: swift
+- **Category**: architecture
+- ViewControllers belong to the UI layer. Calling `URLSession`, `URLRequest`, or any networking API directly inside a ViewController couples the UI to the network layer, violates Clean Architecture, and makes the screen impossible to unit-test without a live network. All network calls must go through a dedicated service or repository class.
+- **Bad:**
+```swift
+class ContactsViewController: UIViewController {
+    func loadData() {
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            // parsing + UI update mixed in the VC
+        }.resume()
+    }
+}
+```
+- **Good:**
+```swift
+class ContactsViewController: UIViewController {
+    var contactService: ContactServiceProtocol!
+
+    func loadData() {
+        contactService.fetchContacts { [weak self] result in
+            self?.updateUI(with: result)
+        }
+    }
+}
+```

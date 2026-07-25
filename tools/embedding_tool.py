@@ -22,6 +22,7 @@ Usage:
 
 import logging
 import os
+import time
 from typing import List
 
 from core import config
@@ -110,11 +111,26 @@ class EmbeddingTool:
         if not texts:
             return []
         client = self._get_client()
-        if self.backend == "voyage":
-            return self._voyage_encode(client, texts)
-        if self.backend == "openai":
-            return self._openai_encode(client, texts)
-        raise ValueError(f"Unknown embedding backend: {self.backend!r}")
+        backoff = 5.0
+        for attempt in range(4):
+            try:
+                if self.backend == "voyage":
+                    return self._voyage_encode(client, texts)
+                if self.backend == "openai":
+                    return self._openai_encode(client, texts)
+                raise ValueError(f"Unknown embedding backend: {self.backend!r}")
+            except Exception as exc:
+                msg = str(exc).lower()
+                is_rate_limit = "rate" in msg or "429" in msg or "quota" in msg
+                if not is_rate_limit or attempt == 3:
+                    raise
+                logger.warning(
+                    "[EmbeddingTool] Rate limit hit, retrying in %.0fs (attempt %d/4)",
+                    backoff, attempt + 1,
+                )
+                time.sleep(backoff)
+                backoff *= 2
+        raise RuntimeError("unreachable")
 
     # ── Backend implementations ───────────────────────────────────────────────
 
@@ -137,8 +153,9 @@ class EmbeddingTool:
     def _openai_encode(self, client, texts: List[str]) -> List[List[float]]:
         """OpenAI embedding via the v1 client."""
         response = client.embeddings.create(
-            input = texts,
-            model = self.model,
+            input      = texts,
+            model      = self.model,
+            dimensions = self.dimensions,   # supports truncation on text-embedding-3-*
         )
         # Sort by index to guarantee order matches input
         return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]

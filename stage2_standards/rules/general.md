@@ -55,28 +55,7 @@ if (retryCount > MAX_RETRY_COUNT) { ... }
 # PROJ-421: edge case handled in next sprint
 ```
 
-### GEN004 — Single Responsibility Principle
-- **Severity**: MEDIUM
-- **Language**: all
-- **Category**: architecture
-- Each class or module should have exactly one reason to change. A class that fetches data, transforms it, and sends emails is doing three jobs.
-- **Bad:**
-```python
-class UserManager:
-    def fetch_from_db(self): ...
-    def send_welcome_email(self): ...
-    def export_to_csv(self): ...
-```
-- **Good:**
-```python
-class UserRepository:
-    def fetch_from_db(self): ...
-
-class UserNotifier:
-    def send_welcome_email(self): ...
-```
-
-### GEN005 — Cyclomatic Complexity ≤ 10
+### GEN004 — Cyclomatic Complexity ≤ 10
 - **Severity**: HIGH
 - **Language**: all
 - **Category**: complexity
@@ -94,7 +73,7 @@ def classify(x):
 ```
 - **Good:** Extract branches into helper functions with clear names.
 
-### GEN006 — Maximum Nesting Depth ≤ 4
+### GEN005 — Maximum Nesting Depth ≤ 4
 - **Severity**: MEDIUM
 - **Language**: all
 - **Category**: complexity

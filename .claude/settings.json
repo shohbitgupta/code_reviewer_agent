@@ -12,7 +12,22 @@
       "Bash(docker --version)",
       "Bash(brew --version)",
       "Bash(echo \"exit:$?\")",
-      "Bash(python main.py https://github.com/shohbitgupta/ContactApp --review --skip-summaries)"
+      "Bash(python main.py https://github.com/shohbitgupta/ContactApp --review --skip-summaries)",
+      "Bash(python -m py_compile core/config.py core/models.py stage3_review/agent.py stage3_review/llm_reviewer.py tools/qdrant_tool.py stage1_ingestion/pipeline.py)",
+      "Bash(python -c ' *)",
+      "Bash(python main.py https://github.com/shohbitgupta/ContactApp --review --skip-summaries --open)",
+      "Bash(open -a Docker)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(docker run *)",
+      "Bash(docker start *)",
+      "Bash(python main.py https://github.com/shohbitgupta/ContactApp --skip-summaries --open)",
+      "Bash(python3 -c ' *)",
+      "Bash(python main.py https://github.com/shohbitgupta/ContactApp --skip-summaries)",
+      "Bash(python3 -c \"import tree_sitter_languages; print\\('tree_sitter_languages available'\\)\")",
+      "Bash(python3 -c \"import tree_sitter; print\\('tree_sitter version:', tree_sitter.__version__\\)\")",
+      "Bash(pip index *)",
+      "Bash(pip search *)",
+      "Bash(xargs cat)"
     ]
   }
 }

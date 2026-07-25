@@ -308,11 +308,33 @@ class IngestionPipeline:
         dep_graph.analyse()
         dep_graph.save(layout.graphs_dir / "dependency_graph.json")
 
-        # ── Step 1k: Vector Upsert ────────────────────────────────────────────
+        # ── Step 1k: Vector Upsert (O4 — incremental) ────────────────────────
+        to_upsert      = []
+        skipped_upsert = 0
         if not skip_qdrant:
-            logger.info("=== Step 1k: Vector Upsert ===")
+            logger.info("=== Step 1k: Vector Upsert (incremental) ===")
             qdrant_tool.ensure_collection()
-            qdrant_tool.upsert_chunks(chunks)
+
+            # O4: fetch existing content hashes to skip unchanged chunks
+            existing_hashes = qdrant_tool.get_existing_content_hashes(
+                [c.chunk_id for c in chunks]
+            )
+            to_upsert = [
+                c for c in chunks
+                if existing_hashes.get(c.chunk_id) != c.content_hash
+            ]
+            skipped_upsert = len(chunks) - len(to_upsert)
+            if skipped_upsert:
+                logger.info(
+                    "[Pipeline] Step 1k: %d/%d chunks skipped (unchanged in Qdrant), "
+                    "upserting %d new/modified",
+                    skipped_upsert, len(chunks), len(to_upsert),
+                )
+
+            if to_upsert:
+                qdrant_tool.upsert_chunks(to_upsert)
+            else:
+                logger.info("[Pipeline] Step 1k: all chunks up to date — no upsert needed")
         else:
             logger.info("=== Step 1k: Skipped (skip_qdrant=True) ===")
 
@@ -357,7 +379,8 @@ class IngestionPipeline:
             "cycles_found":            graph_stats["cycles_found"],
             "layer_violations":        graph_stats["layer_violations"],
             "orphans_found":           graph_stats["orphans_found"],
-            "qdrant_points_upserted":  len(chunks) if not skip_qdrant else 0,
+            "qdrant_points_upserted":  len(to_upsert) if not skip_qdrant else 0,
+            "qdrant_points_skipped":   skipped_upsert if not skip_qdrant else 0,
             "duration_seconds":        round(duration, 2),
             "symbols_indexed":         len(symbol_table),
             "calls_resolved":          analysis_result.total_calls_resolved,
