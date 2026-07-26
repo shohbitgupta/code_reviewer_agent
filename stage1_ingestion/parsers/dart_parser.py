@@ -146,6 +146,17 @@ class DartParser(BaseParser):
         return "dart"
 
     def parse(self, source: str, raw_lines: List[str]) -> List[ParsedSymbol]:
+        """
+        Parse Dart source via regex heuristics into imports and declarations.
+
+        Args:
+            source:    Full file content as a single string.
+            raw_lines: Source split by newline (1-indexed when used with [i-1]).
+
+        Returns:
+            List[ParsedSymbol] — never raises; unmatched lines are simply
+            skipped by the regex patterns.
+        """
         symbols: List[ParsedSymbol] = []
         symbols.extend(self._imports(raw_lines))
         symbols.extend(self._declarations(raw_lines))

@@ -1,5 +1,52 @@
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
+*.pyd
+*.pdb
 
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Distribution / packaging ──────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+
+# ── Credentials — NEVER commit secrets ───────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Runtime workspace (repos, caches, reports, Qdrant storage) ───────────────
 workspace/*
+
+# ── Generated artifacts ───────────────────────────────────────────────────────
+pipeline_diagram.html
+
+# ── Test / benchmark tooling ─────────────────────────────────────────────────
+.pytest_cache/
+.benchmarks/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── IDE — JetBrains (PyCharm / IntelliJ) ────────────────────────────────────
+.idea/
+
+# ── IDE — VS Code ────────────────────────────────────────────────────────────
+.vscode/
+*.code-workspace
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Claude Code local settings (machine-specific) ───────────────────────────
+.claude/settings.local.json

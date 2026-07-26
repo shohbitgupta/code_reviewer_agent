@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Code Review — shohbitgupta/ContactApp</title>
+<style>
+
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:#f1f5f9;color:#1e293b;font-size:14px;line-height:1.6}
+code{font-family:'JetBrains Mono','Fira Code','Cascadia Code',monospace}
+
+/* ── Header ── */
+.header{background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);
+  color:#f8fafc;padding:28px 40px;display:flex;justify-content:space-between;
+  align-items:center}
+.header h1{font-size:22px;font-weight:700;letter-spacing:-.3px}
+.header .meta{font-size:12px;color:#94a3b8;margin-top:4px}
+.header code{font-size:11px;background:#334155;padding:1px 6px;border-radius:4px}
+
+/* ── Layout ── */
+.container{max-width:1160px;margin:0 auto;padding:24px 20px}
+.section{background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);
+  margin-bottom:20px;overflow:hidden}
+.section-header{padding:14px 20px;border-bottom:1px solid #e2e8f0;font-weight:600;
+  font-size:13px;color:#475569;display:flex;align-items:center;gap:8px}
+.section-header .icon{font-size:15px}
+.section-meta{margin-left:auto;font-size:12px;color:#94a3b8;font-weight:400}
+
+/* ── Severity cards ── */
+.sev-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+  gap:12px;padding:18px}
+.sev-card{border-radius:8px;padding:14px 12px;text-align:center;
+  border:1.5px solid transparent;cursor:default;transition:transform .1s}
+.sev-card:hover{transform:translateY(-2px)}
+.sev-card .num{font-size:30px;font-weight:800;line-height:1}
+.sev-card .label{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.6px;margin-top:4px;opacity:.75}
+
+/* ── Stats ── */
+.stats-row{display:flex;flex-wrap:wrap}
+.stat{flex:1;min-width:130px;padding:16px 20px;border-right:1px solid #f1f5f9}
+.stat:last-child{border:none}
+.stat .val{font-size:22px;font-weight:700;color:#0f172a}
+.stat .key{font-size:11px;color:#94a3b8;text-transform:uppercase;
+  letter-spacing:.4px;margin-top:2px}
+
+/* ── Top rules ── */
+.rules-table{padding:4px 20px 16px}
+.rule-row{display:flex;align-items:center;gap:12px;padding:9px 0;
+  border-bottom:1px solid #f8fafc}
+.rule-row:last-child{border:none}
+.rule-id{font-family:monospace;font-size:12px;background:#f1f5f9;padding:2px 8px;
+  border-radius:4px;min-width:72px;text-align:center;font-weight:600;color:#334155}
+.rule-bar{flex:1;background:#e2e8f0;border-radius:99px;height:8px;overflow:hidden}
+.rule-fill{height:100%;border-radius:99px;
+  background:linear-gradient(90deg,#6366f1,#818cf8)}
+.rule-count{font-size:12px;font-weight:600;color:#64748b;min-width:28px;text-align:right}
+
+/* ── File accordion ── */
+.file-item{border-bottom:1px solid #f1f5f9}
+.file-item:last-child{border:none}
+details summary{padding:11px 20px;cursor:pointer;list-style:none;
+  display:flex;align-items:center;gap:10px;background:#fafafa;
+  user-select:none;transition:background .1s}
+details summary::-webkit-details-marker{display:none}
+details[open]>summary{background:#eef2ff;border-bottom:1px solid #e0e7ff}
+details summary:hover{background:#eef2ff}
+.file-path{font-family:monospace;font-size:12px;color:#1e40af;font-weight:600;flex:1}
+.file-count{font-size:11px;padding:2px 9px;border-radius:99px;
+  background:#e0e7ff;color:#3730a3;font-weight:700}
+.chevron{color:#94a3b8;font-size:11px;transition:transform .18s}
+details[open] .chevron{transform:rotate(90deg)}
+
+/* ── Issues list ── */
+.issues-list{padding:14px 18px;display:flex;flex-direction:column;gap:16px}
+
+/* ── Issue card ── */
+.issue-card{border-radius:8px;border:1px solid #e2e8f0;overflow:hidden;
+  transition:box-shadow .15s}
+.issue-card:hover{box-shadow:0 3px 12px rgba(0,0,0,.09)}
+
+/* card header */
+.ic-header{display:flex;align-items:center;gap:8px;padding:10px 14px;
+  flex-wrap:wrap}
+.sev-badge{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.5px;padding:3px 9px;border-radius:4px;white-space:nowrap}
+.ic-title{font-weight:600;font-size:13px;flex:1;min-width:140px}
+.rule-chip{font-family:monospace;font-size:11px;padding:2px 7px;
+  border-radius:4px;background:#f1f5f9;color:#475569;font-weight:600}
+.cat-chip{font-size:10px;padding:2px 7px;border-radius:4px;
+  background:#f0fdf4;color:#166534;font-weight:500;text-transform:uppercase}
+.line-chip{font-size:11px;color:#94a3b8;white-space:nowrap}
+
+/* ── Code block ── */
+.code-block{background:#0f172a;overflow:hidden}
+.cb-header{display:flex;align-items:center;gap:8px;padding:7px 14px;
+  background:#1e293b;border-bottom:1px solid #334155}
+.cb-file{font-family:monospace;font-size:11px;color:#94a3b8;flex:1}
+.cb-lang{font-size:10px;padding:1px 6px;border-radius:3px;
+  background:#334155;color:#94a3b8;text-transform:uppercase;letter-spacing:.4px}
+.cb-no-src{padding:10px 14px;font-size:11px;color:#475569;
+  font-style:italic;background:#0f172a}
+pre.code-lines{margin:0;padding:8px 0;overflow-x:auto}
+.cl{display:flex;align-items:stretch;min-width:0}
+.cl .ln{flex:0 0 44px;text-align:right;padding:1px 10px 1px 0;
+  font-family:monospace;font-size:12px;color:#475569;
+  user-select:none;border-right:2px solid transparent}
+.cl .marker{flex:0 0 16px;text-align:center;font-size:11px;
+  color:transparent;padding-top:1px}
+.cl .lc{flex:1;padding:1px 14px 1px 8px;font-family:monospace;
+  font-size:12px;color:#e2e8f0;white-space:pre}
+/* highlighted (issue) line */
+.cl.hi .ln{color:#f87171;border-right-color:#ef4444}
+.cl.hi .marker{color:#f87171}
+.cl.hi .lc{color:#fef2f2}
+
+/* ── Issue sections (why / fix) ── */
+.ic-body{display:flex;flex-direction:column;gap:0}
+.ic-section{padding:10px 14px;border-top:1px solid #f1f5f9}
+.ic-section-label{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.6px;margin-bottom:5px;display:flex;align-items:center;gap:5px}
+.ic-section-body{font-size:13px;color:#374151;line-height:1.65}
+
+/* No issues */
+.no-issues{text-align:center;padding:40px;color:#94a3b8}
+.ni-icon{font-size:44px;margin-bottom:10px}
+
+/* ── Quality Judge card ── */
+.qj-body{display:flex;gap:0;align-items:flex-start}
+.qj-score-wrap{flex:0 0 120px;display:flex;flex-direction:column;
+  align-items:center;gap:10px;padding:20px 16px;border-right:1px solid #f1f5f9}
+.qj-score-ring{width:76px;height:76px;border-radius:50%;border:4px solid;
+  display:flex;flex-direction:column;align-items:center;justify-content:center}
+.qj-score-num{font-size:24px;font-weight:800;line-height:1}
+.qj-score-sub{font-size:10px;color:#94a3b8}
+.qj-decision{font-size:11px;font-weight:700;letter-spacing:.5px;padding:4px 12px;
+  border-radius:99px;text-transform:uppercase}
+.qj-dims{flex:1;padding:8px 0}
+.qj-dim-row{display:flex;align-items:center;gap:10px;padding:7px 16px;
+  border-bottom:1px solid #f8fafc}
+.qj-dim-row:last-child{border:none}
+.qj-dim-id{font-family:monospace;font-size:11px;color:#64748b;
+  min-width:44px;font-weight:600}
+.qj-dim-name{font-size:12px;font-weight:600;min-width:160px;color:#334155}
+.qj-bar-wrap{flex:0 0 100px;background:#f1f5f9;border-radius:4px;
+  height:14px;overflow:hidden}
+.qj-bar{height:100%;border-radius:4px;transition:width .3s}
+.qj-dim-msg{flex:1;font-size:11px;color:#64748b}
+.qj-status-chip{font-size:10px;font-weight:700;padding:2px 8px;
+  border-radius:4px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.qj-fix{padding:10px 16px 14px;font-size:12px;color:#92400e;
+  background:#fffbeb;border-top:1px solid #fde68a}
+
+/* Footer */
+.footer{text-align:center;color:#94a3b8;font-size:12px;padding:18px}
+
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div class="header">
+  <div>
+    <h1>&#128269; Code Review Report</h1>
+    <div class="meta">
+      <strong>shohbitgupta/ContactApp</strong>&nbsp;·&nbsp;Local run
+      &nbsp;·&nbsp;Run&nbsp;<code>e767ea22</code>
+      &nbsp;·&nbsp;2026-07-25 18:08:15 UTC
+    </div>
+  </div>
+  <div style="text-align:right">
+    <div style="font-size:34px;font-weight:800;color:#ea580c">10</div>
+    <div style="font-size:11px;color:#94a3b8">total issues</div>
+  </div>
+</div>
+
+<div class="container">
+
+
+<!-- ── Ingestion Quality Judge ── -->
+<div class="section">
+  <div class="section-header">
+    <span class="icon">🔬</span>Ingestion Quality Judge
+    <span class="section-meta">Step 1k+2 · swift thresholds</span>
+  </div>
+  <div class="qj-body">
+    <div class="qj-score-wrap">
+      <div class="qj-score-ring" style="border-color:#16a34a">
+        <div class="qj-score-num" style="color:#16a34a">70</div>
+        <div class="qj-score-sub">/ 100</div>
+      </div>
+      <div class="qj-decision" style="background:#f0fdf4;color:#16a34a">
+        ✓&nbsp;PROCEED
+      </div>
+    </div>
+    <div class="qj-dims">
+      <div class="qj-dim-row"><span class="qj-dim-id">IQ-01</span><span class="qj-dim-name">Parse Coverage</span><div class="qj-bar-wrap"><div class="qj-bar" style="width:100%;background:#16a34a30;border-left:3px solid #16a34a"></div></div><span class="qj-dim-msg">26/28 files yielded symbols (93%)</span><span class="qj-status-chip" style="background:#f0fdf4;color:#16a34a">PASS</span></div><div class="qj-dim-row"><span class="qj-dim-id">IQ-02</span><span class="qj-dim-name">Symbol Density</span><div class="qj-bar-wrap"><div class="qj-bar" style="width:100%;background:#16a34a30;border-left:3px solid #16a34a"></div></div><span class="qj-dim-msg">155 symbols across 28 files (5.5 sym/file)  [threshold: ≥4.0]</span><span class="qj-status-chip" style="background:#f0fdf4;color:#16a34a">PASS</span></div><div class="qj-dim-row"><span class="qj-dim-id">IQ-03</span><span class="qj-dim-name">Call Resolution Rate</span><div class="qj-bar-wrap"><div class="qj-bar" style="width:0%;background:#dc262630;border-left:3px solid #dc2626"></div></div><span class="qj-dim-msg">46/181 calls resolved (25%) · 0 low-confidence edges  [threshold: ≥55%]</span><span class="qj-status-chip" style="background:#fef2f2;color:#dc2626">FAIL</span></div><div class="qj-dim-row"><span class="qj-dim-id">IQ-04</span><span class="qj-dim-name">Layer Clarity</span><div class="qj-bar-wrap"><div class="qj-bar" style="width:50%;background:#ca8a0430;border-left:3px solid #ca8a04"></div></div><span class="qj-dim-msg">11/38 files unclassified (29% unknown) · layers: unknown:11 domain:11 infrastructure:7</span><span class="qj-status-chip" style="background:#fefce8;color:#ca8a04">WARN</span></div><div class="qj-dim-row"><span class="qj-dim-id">IQ-05</span><span class="qj-dim-name">Chunk Size Health</span><div class="qj-bar-wrap"><div class="qj-bar" style="width:100%;background:#16a34a30;border-left:3px solid #16a34a"></div></div><span class="qj-dim-msg">p95=60 lines across 187 chunks (min=1, max=101, median=6)  [threshold: &lt;130 lines]</span><span class="qj-status-chip" style="background:#f0fdf4;color:#16a34a">PASS</span></div><div class="qj-dim-row"><span class="qj-dim-id">IQ-06</span><span class="qj-dim-name">Graph Health</span><div class="qj-bar-wrap"><div class="qj-bar" style="width:50%;background:#ca8a0430;border-left:3px solid #ca8a04"></div></div><span class="qj-dim-msg">0 cycle(s) · 104/225 orphan nodes (46% orphan rate)  [thresholds: cycles&lt;5, orphans&lt;15%]</span><span class="qj-status-chip" style="background:#fefce8;color:#ca8a04">WARN</span></div><div class="qj-dim-row"><span class="qj-dim-id">IQ-07</span><span class="qj-dim-name">Embedding Coverage</span><div class="qj-bar-wrap"><div class="qj-bar" style="width:100%;background:#16a34a30;border-left:3px solid #16a34a"></div></div><span class="qj-dim-msg">225/225 chunks have embeddings (100%)</span><span class="qj-status-chip" style="background:#f0fdf4;color:#16a34a">PASS</span></div>
+    </div>
+  </div>
+  
+</div>
+
+<!-- ── Severity cards ── -->
+<div class="section">
+  <div class="section-header"><span class="icon">🎯</span>Severity Breakdown</div>
+  <div class="sev-grid"><div class="sev-card" style="background:#fef2f2;border-color:#dc262630"><div class="num" style="color:#dc2626">0</div><div class="label" style="color:#dc2626">CRITICAL</div></div><div class="sev-card" style="background:#fff7ed;border-color:#ea580c30"><div class="num" style="color:#ea580c">1</div><div class="label" style="color:#ea580c">HIGH</div></div><div class="sev-card" style="background:#fefce8;border-color:#ca8a0430"><div class="num" style="color:#ca8a04">4</div><div class="label" style="color:#ca8a04">MEDIUM</div></div><div class="sev-card" style="background:#eff6ff;border-color:#2563eb30"><div class="num" style="color:#2563eb">5</div><div class="label" style="color:#2563eb">LOW</div></div><div class="sev-card" style="background:#f9fafb;border-color:#6b728030"><div class="num" style="color:#6b7280">0</div><div class="label" style="color:#6b7280">INFO</div></div><div class="sev-card" style="background:#f0fdf4;border-color:#86efac"><div class="num" style="color:#16a34a">10</div><div class="label" style="color:#16a34a">TOTAL</div></div></div>
+</div>
+
+<!-- ── Stats ── -->
+<div class="section">
+  <div class="section-header"><span class="icon">📊</span>Run Statistics</div>
+  <div class="stats-row"><div class="stat"><div class="val">28</div><div class="key">Files parsed</div></div><div class="stat"><div class="val">225</div><div class="key">Chunks indexed</div></div><div class="stat"><div class="val">0</div><div class="key">Chunks reviewed</div></div><div class="stat"><div class="val">0</div><div class="key">LLM cache hits</div></div><div class="stat"><div class="val">10</div><div class="key">Pre-flagged</div></div><div class="stat"><div class="val">29.23s</div><div class="key">Ingestion time</div></div></div>
+</div>
+
+<!-- ── Top rules ── -->
+<div class="section">
+  <div class="section-header"><span class="icon">📋</span>Top Violated Rules</div>
+  <div class="rules-table"><div class="rule-row"><span class="rule-id">GEN002</span><div class="rule-bar"><div class="rule-fill" style="width:100%"></div></div><span class="rule-count">5</span></div><div class="rule-row"><span class="rule-id">GEN001</span><div class="rule-bar"><div class="rule-fill" style="width:40%"></div></div><span class="rule-count">2</span></div><div class="rule-row"><span class="rule-id">CP013</span><div class="rule-bar"><div class="rule-fill" style="width:40%"></div></div><span class="rule-count">2</span></div><div class="rule-row"><span class="rule-id">CP012</span><div class="rule-bar"><div class="rule-fill" style="width:20%"></div></div><span class="rule-count">1</span></div></div>
+</div>
+
+<!-- ── Issues by file ── -->
+<div class="section">
+  <div class="section-header">
+    <span class="icon">📁</span>Issues by File
+    <span class="section-meta">4 file(s) with findings</span>
+  </div>
+  <div class="file-item"><details><summary><span class="chevron">&#9658;</span><span class="file-path">Go-JekContactApp/CustomViews/ToastView.swift</span><span class="file-count">3</span></summary><div class="issues-list"><div class="issue-card" style="border-left:4px solid #2563eb;border-color:#93c5fd;border-left-color:#2563eb"><div class="ic-header" style="background:#eff6ff"><span class="sev-badge" style="background:#2563eb20;color:#2563eb">LOW</span><span class="rule-chip">GEN002</span><span class="ic-title">No magic numbers</span><span class="cat-chip">style</span><span class="cat-chip" style="background:#eff6ff;color:#1e40af">presentation</span><span class="line-chip">📍 line 126</span></div><div class="code-block"><div class="cb-header"><span class="cb-file">ToastView.swift</span><span class="cb-lang">SWIFT</span></div><pre class="code-lines"><div class="cl"><span class="ln">123</span><span class="marker"></span><span class="lc">        label = UILabel(frame: CGRect.zero)</span></div><div class="cl"><span class="ln">124</span><span class="marker"></span><span class="lc">        label.numberOfLines = 0</span></div><div class="cl"><span class="ln">125</span><span class="marker"></span><span class="lc">        label.font = UIFont.regular(14.0)</span></div><div class="cl hi" style="background:rgba(37,99,235,.14)"><span class="ln">126</span><span class="marker">►</span><span class="lc">        label.textAlignment = .center</span></div><div class="cl"><span class="ln">127</span><span class="marker"></span><span class="lc">        label.textColor = UIColor.white</span></div><div class="cl"><span class="ln">128</span><span class="marker"></span><span class="lc">        label.autoresizingMask = [.flexibleWidth, .flexibleHeight]</span></div><div class="cl"><span class="ln">129</span><span class="marker"></span><span class="lc">        </span></div></pre></div><div class="ic-body"><div class="ic-section"><div class="ic-section-label" style="color:#2563eb"><span>❓</span> What's wrong</div><div class="ic-section-body">Line 126 contains a magic number. Extract to a named constant for readability.</div></div><div class="ic-section" style="background:#fafffe"><div class="ic-section-label" style="color:#16a34a"><span>💡</span> How to fix</div><div class="ic-section-body" style="font-family:'JetBrains Mono',monospace;font-size:12px">See rule GEN002 in standards/swift.md for the required fix.</div></div></div></div><div class="issue-card" style="border-left:4px solid #2563eb;border-color:#93c5fd;border-left-color:#2563eb"><div class="ic-header" style="background:#eff6ff"><span class="sev-badge" style="background:#2563eb20;color:#2563eb">LOW</span><span class="rule-chip">GEN002</span><span class="ic-title">No magic numbers</span><span class="cat-chip">style</span><span class="cat-chip" style="background:#eff6ff;color:#1e40af">presentation</span><span class="line-chip">📍 line 133</span></div><div class="code-block"><div class="cb-header"><span class="cb-file">ToastView.swift</span><span class="cb-lang">SWIFT</span></div><pre class="code-lines"><div class="cl"><span class="ln">130</span><span class="marker"></span><span class="lc">        super.init(frame: frame)</span></div><div class="cl"><span class="ln">131</span><span class="marker"></span><span class="lc">        </span></div><div class="cl"><span class="ln">132</span><span class="marker"></span><span class="lc">        margin = 12.0</span></div><div class="cl hi" style="background:rgba(37,99,235,.14)"><span class="ln">133</span><span class="marker">►</span><span class="lc">        offset = 2.0</span></div><div class="cl"><span class="ln">134</span><span class="marker"></span><span class="lc">        clipsToBounds = true</span></div><div class="cl"><span class="ln">135</span><span class="marker"></span><span class="lc">        layer.cornerRadius = 8.0</span></div><div class="cl"><span class="ln">136</span><span class="marker"></span><span class="lc">        backgroundColor = UIColor.clear</span></div></pre></div><div class="ic-body"><div class="ic-section"><div class="ic-section-label" style="color:#2563eb"><span>❓</span> What's wrong</div><div class="ic-section-body">Line 133 contains a magic number. Extract to a named constant for readability.</div></div><div class="ic-section" style="background:#fafffe"><div class="ic-section-label" style="color:#16a34a"><span>💡</span> How to fix</div><div class="ic-section-body" style="font-family:'JetBrains Mono',monospace;font-size:12px">See rule GEN002 in standards/swift.md for the required fix.</div></div></div></div><div class="issue-card" style="border-left:4px solid #2563eb;border-color:#93c5fd;border-left-color:#2563eb"><div class="ic-header" style="background:#eff6ff"><span class="sev-badge" style="background:#2563eb20;color:#2563eb">LOW</span><span class="rule-chip">GEN002</span><span class="ic-title">No magic numbers</span><span class="cat-chip">style</span><span class="cat-chip" style="background:#eff6ff;color:#1e40af">presentation</span><span class="line-chip">📍 line 136</span></div><div class="code-block"><div class="cb-header"><span class="cb-file">ToastView.swift</span><span class="cb-lang">SWIFT</span></div><pre class="code-lines"><div class="cl"><span class="ln">133</span><span class="marker"></span><span class="lc">        offset = 2.0</span></div><div class="cl"><span class="ln">134</span><span class="marker"></span><span class="lc">        clipsToBounds = true</span></div><div class="cl"><span class="ln">135</span><span class="marker"></span><span class="lc">        layer.cornerRadius = 8.0</span></div><div class="cl hi" style="background:rgba(37,99,235,.14)"><span class="ln">136</span><span class="marker">►</span><span class="lc">        backgroundColor = UIColor.clear</span></div><div class="cl"><span class="ln">137</span><span class="marker"></span><span class="lc">    }</span></div><div class="cl"><span class="ln">138</span><span class="marker"></span><span class="lc">    </span></div><div class="cl"><span class="ln">139</span><span class="marker"></span><span class="lc">    required init?(coder aDecoder: NSCoder) {</span></div></pre></div><div class="ic-body"><div class="ic-section"><div class="ic-section-label" style="color:#2563eb"><span>❓</span> What's wrong</div><div class="ic-section-body">Line 136 contains a magic number. Extract to a named constant for readability.</div></div><div class="ic-section" style="background:#fafffe"><div class="ic-section-label" style="color:#16a34a"><span>💡</span> How to fix</div><div class="ic-section-body" style="font-family:'JetBrains Mono',monospace;font-size:12px">See rule GEN002 in standards/swift.md for the required fix.</div></div></div></div></div></details></div><div class="file-item"><details><summary><span class="chevron">&#9658;</span><span class="file-path">Go-JekContactApp/NetworkService/NetworkManager/NetworkServiceManager.swift</span><span class="file-count">5</span></summary><div class="issues-list"><div class="issue-card" style="border-left:4px solid #ea580c;border-color:#fdba74;border-left-color:#ea580c"><div class="ic-header" style="background:#fff7ed"><span class="sev-badge" style="background:#ea580c20;color:#ea580c">HIGH</span><span class="rule-chip">CP012</span><span class="ic-title">God class: too many responsibilities</span><span class="cat-chip">architecture</span><span class="cat-chip" style="background:#eff6ff;color:#1e40af">domain</span><span class="line-chip">📍 line 311</span></div><div class="code-block"><div class="cb-header"><span class="cb-file">NetworkServiceManager.swift</span><span class="cb-lang">SWIFT</span></div><pre class="code-lines"><div class="cl"><span class="ln">308</span><span class="marker"></span><span class="lc"></span></div><div class="cl"><span class="ln">309</span><span class="marker"></span><span class="lc"></span></div><div class="cl"><span class="ln">310</span><span class="marker"></span><span class="lc"></span></div><div class="cl hi" style="background:rgba(234,88,12,.16)"><span class="ln">311</span><span class="marker">►</span><span class="lc">extension NetworkServiceManager : NetworkDataDownloaderProtocol {</span></div><div class="cl"><span class="ln">312</span><span class="marker"></span><span class="lc">    </span></div><div class="cl"><span class="ln">313</span><span class="marker"></span><span class="lc">    /**</span></div><div class="cl"><span class="ln">314</span><span class="marker"></span><span class="lc">     This method will be used for creating web request.</span></div></pre></div><div class="ic-body"><div class="ic-section"><div class="ic-section-label" style="color:#ea580c"><span>❓</span> What's wrong</div><div class="ic-section-body">&#x27;NetworkServiceManager&#x27; has 13 methods (limit 10). Extract cohesive groups of methods into separate, focused classes.</div></div><div class="ic-section" style="background:#fafffe"><div class="ic-section-label" style="color:#16a34a"><span>💡</span> How to fix</div><div class="ic-section-body" style="font-family:'JetBrains Mono',monospace;font-size:12px">See rule CP012 in standards/swift.md for the required fix.</div></div></div></div><div class="issue-card" style="border-left:4px solid #ca8a04;border-color:#fde047;border-left-color:#ca8a04"><div class="ic-header" style="background:#fefce8"><span class="sev-badge" style="background:#ca8a0420;color:#ca8a04">MEDIUM</span><span class="rule-chip">GEN001</span><span class="ic-title">Function length must not exceed 50 lines</span><span class="cat-chip">complexity</span><span class="cat-chip" style="background:#eff6ff;color:#1e40af">domain</span><span class="line-chip">📍 line 46</span></div><div class="code-block"><div class="cb-header"><span class="cb-file">NetworkServiceManager.swift</span><span class="cb-lang">SWIFT</span></div><pre class="code-lines"><div class="cl"><span class="ln">43</span><span class="marker"></span><span class="lc"></span></div><div class="cl"><span class="ln">44</span><span class="marker"></span><span class="lc">extension NetworkServiceManager {</span></div><div class="cl"><span class="ln">45</span><span class="marker"></span><span class="lc">    </span></div><div class="cl hi" style="background:rgba(202,138,4,.14)"><span class="ln">46</span><span class="marker">►</span><span class="lc">    private func createRequest(withPath path : String, withParam param: [AnyHashable : Any]?, withCustomHeader headers :…</span></div><div class="cl"><span class="ln">47</span><span class="marker"></span><span class="lc">    {</span></div><div class="cl"><span class="ln">48</span><span class="marker"></span><span class="lc">        let webServiceObj = NetworkObject(taskID: path, withParam: param)</span></div><div class="cl"><span class="ln">49</span><span class="marker"></span><span class="lc">        let newActiveRequests = activeRequests.filter { (object) -&gt; Bool in</span></div></pre></div><div class="ic-body"><div class="ic-section"><div class="ic-section-label" style="color:#ca8a04"><span>❓</span> What's wrong</div><div class="ic-section-body">&#x27;createRequest&#x27; is 86 non-blank lines (limit 50). Extract sub-functions to reduce length.</div></div><div class="ic-section" style="background:#fafffe"><div class="ic-section-label" style="color:#16a34a"><span>💡</span> How to fix</div><div class="ic-section-body" style="font-family:'JetBrains Mono',monospace;font-size:12px">See rule GEN001 in standards/swift.md for the required fix.</div></div></div></div><div class="issue-card" style="border-left:4px solid #ca8a04;border-color:#fde047;border-left-color:#ca8a04"><div class="ic-header" style="background:#fefce8"><span class="sev-badge" style="background:#ca8a0420;color:#ca8a04">MEDIUM</span><span class="rule-chip">GEN001</span><span class="ic-title">Function length must not exceed 50 lines</span><span class="cat-chip">complexity</span><span class="cat-chip" style="background:#eff6ff;color:#1e40af">domain</span><span class="line-chip">📍 line 131</span></div><div class="code-block"><div class="cb-header"><span class="cb-file">NetworkServiceManager.swift</span><span class="cb-lang">SWIFT</span></div><pre class="code-lines"><div class="cl"><span class="ln">128</span><span class="marker"></span><span class="lc">                        if let task = dataTask {</span></div><div class="cl"><span class="ln">129</span><span class="marker"></span><span class="lc">                            self?.removeTask(task: task)</span></div><div class="cl"><span class="ln">130</span><span class="marker"></span><span class="lc">                        }</span></div><div class="cl hi" style="background:rgba(202,138,4,.14)"><span class="ln">131</span><span class="marker">►</span><span class="lc">                        </span></div><div class="cl"><span class="ln">132</span><span class="marker"></span><span class="lc">                        completion(nil, errData)</span></div><div class="cl"><span class="ln">133</span><span class="marker"></span><span class="lc">                    }</span></div><div class="cl"><span class="ln">134</span><span class="marker"></span><span class="lc">                }</span></div></pre></div><div class="ic-body"><div class="ic-section"><div class="ic-section-label" style="color:#ca8a04"><span>❓</span> What's wrong</div><div class="ic-section-body">&#x27;createRequest__part2&#x27; is 82 non-blank lines (limit 50). Extract sub-functions to reduce length.</div></div><div class="ic-section" style="background:#fafffe"><div class="ic-section-label" style="color:#16a34a"><span>💡</span> How to fix</div><div class="ic-section-body" style="font-family:'JetBrains Mono',monospace;font-size:12px">See rule GEN001 in standards/swift.md for the required fix.</div></div></div></div><div class="issue-card" style="border-left:4px solid #ca8a04;border-color:#fde047;border-left-color:#ca8a04"><div class="ic-header" style="background:#fefce8"><span class="sev-badge" style="background:#ca8a0420;color:#ca8a04">MEDIUM</span><span class="rule-chip">CP013</span><span class="ic-title">Long parameter list (&gt; 5 parameters)</span><span class="cat-chip">complexity</span><span class="cat-chip" style="background:#eff6ff;color:#1e40af">domain</span><span class="line-chip">📍 line 266</span></div><div class="code-block"><div class="cb-header"><span class="cb-file">NetworkServiceManager.swift</span><span class="cb-lang">SWIFT</span></div><pre class="code-lines"><div class="cl"><span class="ln">263</span><span class="marker"></span><span class="lc">        }</span></div><div class="cl"><span class="ln">264</span><span class="marker"></span><span class="lc">    }</span></div><div class="cl"><span class="ln">265</span><span class="marker"></span><span class="lc">    </span></div><div class="cl hi" style="background:rgba(202,138,4,.14)"><span class="ln">266</span><span class="marker">►</span><span class="lc">    private func getRequest(withURLStr urlStr : String, requestType type: RequestType, param paramVal: [AnyHashable : An…</span></div><div class="cl"><span class="ln">267</span><span class="marker"></span><span class="lc">        let dataTaskVal = dataTask(withURLStr: urlStr, requestType: type, param: paramVal, headers: headerVal, successHa…</span></div><div class="cl"><span class="ln">268</span><span class="marker"></span><span class="lc">        dataTaskVal?.resume()</span></div><div class="cl"><span class="ln">269</span><span class="marker"></span><span class="lc">        return dataTaskVal</span></div></pre></div><div class="ic-body"><div class="ic-section"><div class="ic-section-label" style="color:#ca8a04"><span>❓</span> What's wrong</div><div class="ic-section-body">&#x27;getRequest&#x27; has 6 parameters (limit 5). Group related parameters into a data object or split the function by responsibility.</div></div><div class="ic-section" style="background:#fafffe"><div class="ic-section-label" style="color:#16a34a"><span>💡</span> How to fix</div><div class="ic-section-body" style="font-family:'JetBrains Mono',monospace;font-size:12px">See rule CP013 in standards/swift.md for the required fix.</div></div></div></div><div class="issue-card" style="border-left:4px solid #2563eb;border-color:#93c5fd;border-left-color:#2563eb"><div class="ic-header" style="background:#eff6ff"><span class="sev-badge" style="background:#2563eb20;color:#2563eb">LOW</span><span class="rule-chip">GEN002</span><span class="ic-title">No magic numbers</span><span class="cat-chip">style</span><span class="cat-chip" style="background:#eff6ff;color:#1e40af">domain</span><span class="line-chip">📍 line 305</span></div><div class="code-block"><div class="cb-header"><span class="cb-file">NetworkServiceManager.swift</span><span class="cb-lang">SWIFT</span></div><pre class="code-lines"><div class="cl"><span class="ln">302</span><span class="marker"></span><span class="lc">    </span></div><div class="cl"><span class="ln">303</span><span class="marker"></span><span class="lc">    private static func urlCache() -&gt; URLCache {</span></div><div class="cl"><span class="ln">304</span><span class="marker"></span><span class="lc">        let urlCache = URLCache(memoryCapacity: 20*1024*1024, diskCapacity: 100*1024*1024, diskPath: &quot;com.ContactAppWebR…</span></div><div class="cl hi" style="background:rgba(37,99,235,.14)"><span class="ln">305</span><span class="marker">►</span><span class="lc">        return urlCache</span></div><div class="cl"><span class="ln">306</span><span class="marker"></span><span class="lc">    }</span></div><div class="cl"><span class="ln">307</span><span class="marker"></span><span class="lc">}</span></div><div class="cl"><span class="ln">308</span><span class="marker"></span><span class="lc"></span></div></pre></div><div class="ic-body"><div class="ic-section"><div class="ic-section-label" style="color:#2563eb"><span>❓</span> What's wrong</div><div class="ic-section-body">Line 305 contains a magic number. Extract to a named constant for readability.</div></div><div class="ic-section" style="background:#fafffe"><div class="ic-section-label" style="color:#16a34a"><span>💡</span> How to fix</div><div class="ic-section-body" style="font-family:'JetBrains Mono',monospace;font-size:12px">See rule GEN002 in standards/swift.md for the required fix.</div></div></div></div></div></details></div><div class="file-item"><details><summary><span class="chevron">&#9658;</span><span class="file-path">Go-JekContactApp/NetworkService/SessionManager/URLSessionManager.swift</span><span class="file-count">1</span></summary><div class="issues-list"><div class="issue-card" style="border-left:4px solid #ca8a04;border-color:#fde047;border-left-color:#ca8a04"><div class="ic-header" style="background:#fefce8"><span class="sev-badge" style="background:#ca8a0420;color:#ca8a04">MEDIUM</span><span class="rule-chip">CP013</span><span class="ic-title">Long parameter list (&gt; 5 parameters)</span><span class="cat-chip">complexity</span><span class="cat-chip" style="background:#eff6ff;color:#1e40af">domain</span><span class="line-chip">📍 line 51</span></div><div class="code-block"><div class="cb-header"><span class="cb-file">URLSessionManager.swift</span><span class="cb-lang">SWIFT</span></div><pre class="code-lines"><div class="cl"><span class="ln">48</span><span class="marker"></span><span class="lc"></span></div><div class="cl"><span class="ln">49</span><span class="marker"></span><span class="lc">extension URLSessionManager : URLSessionManagerProtocol {</span></div><div class="cl"><span class="ln">50</span><span class="marker"></span><span class="lc">    </span></div><div class="cl hi" style="background:rgba(202,138,4,.14)"><span class="ln">51</span><span class="marker">►</span><span class="lc">    @discardableResult</span></div><div class="cl"><span class="ln">52</span><span class="marker"></span><span class="lc">    func dataTask(withURLStr urlStr : String, requestType type: RequestType, param paramVal: [AnyHashable : Any]?, heade…</span></div><div class="cl"><span class="ln">53</span><span class="marker"></span><span class="lc">        </span></div><div class="cl"><span class="ln">54</span><span class="marker"></span><span class="lc">        guard let urlReq = URL(string: urlStr, relativeTo: self.hostURL) else {</span></div></pre></div><div class="ic-body"><div class="ic-section"><div class="ic-section-label" style="color:#ca8a04"><span>❓</span> What's wrong</div><div class="ic-section-body">&#x27;dataTask&#x27; has 6 parameters (limit 5). Group related parameters into a data object or split the function by responsibility.</div></div><div class="ic-section" style="background:#fafffe"><div class="ic-section-label" style="color:#16a34a"><span>💡</span> How to fix</div><div class="ic-section-body" style="font-family:'JetBrains Mono',monospace;font-size:12px">See rule CP013 in standards/swift.md for the required fix.</div></div></div></div></div></details></div><div class="file-item"><details><summary><span class="chevron">&#9658;</span><span class="file-path">Go-JekContactApp/Utility/Utility.swift</span><span class="file-count">1</span></summary><div class="issues-list"><div class="issue-card" style="border-left:4px solid #2563eb;border-color:#93c5fd;border-left-color:#2563eb"><div class="ic-header" style="background:#eff6ff"><span class="sev-badge" style="background:#2563eb20;color:#2563eb">LOW</span><span class="rule-chip">GEN002</span><span class="ic-title">No magic numbers</span><span class="cat-chip">style</span><span class="cat-chip" style="background:#eff6ff;color:#1e40af">infrastructure</span><span class="line-chip">📍 line 24</span></div><div class="code-block"><div class="cb-header"><span class="cb-file">Utility.swift</span><span class="cb-lang">SWIFT</span></div><pre class="code-lines"><div class="cl"><span class="ln">21</span><span class="marker"></span><span class="lc">    func isValidEmail() -&gt; Bool {</span></div><div class="cl"><span class="ln">22</span><span class="marker"></span><span class="lc">        // print(&quot;validate calendar: \(testStr)&quot;)</span></div><div class="cl"><span class="ln">23</span><span class="marker"></span><span class="lc">        let emailRegEx = &quot;[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}&quot;</span></div><div class="cl hi" style="background:rgba(37,99,235,.14)"><span class="ln">24</span><span class="marker">►</span><span class="lc">        </span></div><div class="cl"><span class="ln">25</span><span class="marker"></span><span class="lc">        let emailTest = NSPredicate(format:&quot;SELF MATCHES %@&quot;, emailRegEx)</span></div><div class="cl"><span class="ln">26</span><span class="marker"></span><span class="lc">        return emailTest.evaluate(with: self)</span></div><div class="cl"><span class="ln">27</span><span class="marker"></span><span class="lc">    }</span></div></pre></div><div class="ic-body"><div class="ic-section"><div class="ic-section-label" style="color:#2563eb"><span>❓</span> What's wrong</div><div class="ic-section-body">Line 24 contains a magic number. Extract to a named constant for readability.</div></div><div class="ic-section" style="background:#fafffe"><div class="ic-section-label" style="color:#16a34a"><span>💡</span> How to fix</div><div class="ic-section-body" style="font-family:'JetBrains Mono',monospace;font-size:12px">See rule GEN002 in standards/swift.md for the required fix.</div></div></div></div></div></details></div>
+</div>
+
+</div>
+<div class="footer">Generated by <strong>code-reviewer-agent</strong></div>
+
+<script>
+// Expand the first file accordion automatically
+document.addEventListener('DOMContentLoaded',()=>{
+  const d=document.querySelector('.file-item details');
+  if(d) d.open=true;
+});
+</script>
+</body></html>

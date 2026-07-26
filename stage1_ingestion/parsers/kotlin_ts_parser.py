@@ -116,6 +116,14 @@ class KotlinTsParser(TreeSitterParser):
         source_bytes: bytes,
         raw_lines: List[str],
     ) -> List[ParsedSymbol]:
+        """
+        Extract grouped imports, then recursively extract declarations via
+        _extract_declarations(), starting with no enclosing parent.
+
+        Returns:
+            List[ParsedSymbol] combining import groups with class_head and
+            function/method symbols.
+        """
         symbols: List[ParsedSymbol] = []
         root = tree.root_node
 
@@ -227,6 +235,15 @@ class KotlinTsParser(TreeSitterParser):
         raw_lines: List[str],
         parent_name: Optional[str],
     ) -> List[ParsedSymbol]:
+        """
+        Build a class_head ParsedSymbol for a class/interface/object declaration.
+
+        Tags the decorators with @android_component when any resolved base
+        class/interface is in ANDROID_COMPONENT_BASES.
+
+        Returns:
+            A single-element list, or [] if the declaration has no identifier.
+        """
         name = self._get_identifier(node, source_bytes)
         if not name:
             return []
@@ -259,6 +276,14 @@ class KotlinTsParser(TreeSitterParser):
         raw_lines: List[str],
         parent_name: Optional[str],
     ) -> List[ParsedSymbol]:
+        """
+        Build a class_head ParsedSymbol for a `companion object` block.
+
+        Falls back to the name "Companion" for the common unnamed case
+        (`companion object { ... }`) and always tags the decorators with
+        @companion so downstream consumers can distinguish it from a regular
+        nested object.
+        """
         name = self._get_identifier(node, source_bytes) or "Companion"
         start_line, block_end = self._node_lines(node)
         decorators = self._collect_annotations(node, source_bytes) + ["@companion"]
@@ -315,6 +340,18 @@ class KotlinTsParser(TreeSitterParser):
         raw_lines: List[str],
         parent_name: Optional[str],
     ) -> List[ParsedSymbol]:
+        """
+        Build a function/method ParsedSymbol from a `function_declaration` node.
+
+        Tags @android_lifecycle when the name is in ANDROID_LIFECYCLE_METHODS
+        and @extension:<Receiver> when the declaration is a Kotlin extension
+        function (see _get_extension_receiver). Classified as "method" with
+        *parent_name* set when declared inside a class/object/companion,
+        else "function".
+
+        Returns:
+            A single-element list, or [] if the declaration has no identifier.
+        """
         name = self._get_identifier(node, source_bytes)
         if not name:
             return []

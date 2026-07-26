@@ -62,6 +62,22 @@ class PromptBuilder:
         rules_section:      str,            # output of build_review_prompt_rules()
         pre_flagged:        List[RuleViolation],
     ) -> str:
+        """
+        Assemble the full per-chunk user prompt: standards, chunk header,
+        context, pre-flagged violations, source code, and closing instruction.
+
+        Args:
+            chunk:           The chunk being reviewed.
+            context_section: Pre-rendered context block from
+                             format_context_for_prompt() (may be empty).
+            rules_section:   Pre-rendered rules block from
+                             build_review_prompt_rules().
+            pre_flagged:     Mechanical violations already found for this chunk;
+                             listed so the LLM does not re-flag them.
+
+        Returns:
+            The complete user-message string to send to the LLM.
+        """
         parts: List[str] = []
 
         # ── 1. Coding standards ───────────────────────────────────────────────

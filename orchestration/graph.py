@@ -115,6 +115,7 @@ class ReviewPipeline:
     # ── Stage runners ─────────────────────────────────────────────────────────
 
     def _run_ingestion(self, state: Dict) -> Dict:
+        """Delegate to Stage 1 with the tools and skip flags configured on this pipeline."""
         from stage1_ingestion.agent import run_ingestion
         return run_ingestion(
             state,
@@ -130,6 +131,12 @@ class ReviewPipeline:
         return run_standards(state)
 
     def _run_review(self, state: Dict) -> Dict:
+        """
+        Delegate to Stage 3, gated by the Stage 1 Ingestion Quality Judge
+        decision: short-circuits to an empty issue list on ABORT (ingestion
+        score too low to trust), logs a warning and proceeds normally on
+        WARN, and runs unconditionally otherwise.
+        """
         from stage3_review.agent import run_review
 
         quality = state.get("ingestion_quality")
@@ -162,6 +169,7 @@ class ReviewPipeline:
         )
 
     def _run_comments(self, state: Dict) -> Dict:
+        """Delegate to Stage 4; polish is skipped automatically when no llm_client was configured."""
         from stage4_comments.agent import run_comments
         return run_comments(
             state,

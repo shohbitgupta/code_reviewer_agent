@@ -69,6 +69,16 @@ _SEV_HIGHLIGHT_BG = {
 
 
 class ReportBuilder:
+    """
+    Builds the three Stage 5 report artefacts (dict, JSON file, HTML file)
+    for a single pipeline run — see module docstring for the full contract.
+
+    Args:
+        run_id:    Unique run identifier; used as the output directory name
+                   under workspace/reports/.
+        repo_name: "owner/repo" string shown in the report header.
+        pr_number: PR number shown in the report header (0 = local run).
+    """
 
     def __init__(self, run_id: str, repo_name: str = "", pr_number: int = 0) -> None:
         self._run_id    = run_id
@@ -81,6 +91,18 @@ class ReportBuilder:
     # ── Public ────────────────────────────────────────────────────────────────
 
     def build(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build the report dict from *state* and write report.json + report.html
+        to workspace/reports/<run_id>/.
+
+        Args:
+            state: Shared ReviewState dict (see module docstring for the
+                   keys consumed).
+
+        Returns:
+            The report dict, with "json_path" and "html_path" keys added
+            pointing at the written files.
+        """
         issues:   List[ReviewIssue]   = state.get("issues",   [])
         comments: List[ReviewComment] = state.get("comments", [])
         ingestion_stats  = state.get("ingestion_stats",  {})
@@ -170,6 +192,11 @@ class ReportBuilder:
         local_repo_path:   str,
         ingestion_quality: object = None,
     ) -> Dict[str, Any]:
+        """
+        Aggregate issues, comments, and per-stage stats into the
+        JSON-serialisable report dict, attaching a rendered code snippet
+        (via _extract_snippet) to every issue and grouping issues by file.
+        """
         by_sev      = Counter(i.severity for i in issues)
         by_cat      = Counter(i.category for i in issues)
         rule_counts = Counter(i.rule_id  for i in issues).most_common(10)
@@ -212,6 +239,11 @@ class ReportBuilder:
     # ── HTML top-level ────────────────────────────────────────────────────────
 
     def _render_html(self, report: Dict) -> str:
+        """
+        Render the full standalone HTML report page: header, optional
+        Quality Judge card, severity breakdown, run statistics, top
+        violated rules, and the per-file issue accordion.
+        """
         summary   = report["summary"]
         by_sev    = summary.get("by_severity", {})
         total     = summary.get("total_issues", 0)
@@ -522,6 +554,7 @@ pre.code-lines{margin:0;padding:8px 0;overflow-x:auto}
 </div>"""
 
     def _sev_cards(self, by_sev: Dict, total: int) -> str:
+        """Render the severity-count card grid, plus a trailing TOTAL card."""
         parts = []
         for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
             n   = by_sev.get(s, 0)
@@ -542,6 +575,7 @@ pre.code-lines{margin:0;padding:8px 0;overflow-x:auto}
         return "".join(parts)
 
     def _top_rules(self, top_rules: List[Dict]) -> str:
+        """Render the top violated rules as horizontal bar rows, scaled to the most frequent rule."""
         if not top_rules:
             return ""
         max_count = top_rules[0]["count"] or 1
@@ -559,6 +593,7 @@ pre.code-lines{margin:0;padding:8px 0;overflow-x:auto}
         return "".join(rows)
 
     def _stats_row(self, i_stats: Dict, r_stats: Dict) -> str:
+        """Render the run-statistics strip (files parsed, chunks indexed/reviewed, cache hits, ingestion time)."""
         items = [
             (i_stats.get("files_parseable",    "—"), "Files parsed"),
             (i_stats.get("chunks_total",        "—"), "Chunks indexed"),
@@ -574,6 +609,7 @@ pre.code-lines{margin:0;padding:8px 0;overflow-x:auto}
         )
 
     def _files_section(self, files: List[Dict]) -> str:
+        """Render one collapsible <details> accordion item per file with findings."""
         parts = []
         for f in files:
             issues_html = self._issues_list(f["issues"], f["path"])
@@ -591,6 +627,7 @@ pre.code-lines{margin:0;padding:8px 0;overflow-x:auto}
         return "".join(parts)
 
     def _issues_list(self, issues: List[Dict], file_path: str) -> str:
+        """Sort a file's issues by severity and render each as an issue card."""
         sorted_issues = sorted(
             issues, key=lambda i: _SEV_ORDER.get(i.get("severity", "INFO"), 99)
         )
@@ -599,6 +636,11 @@ pre.code-lines{margin:0;padding:8px 0;overflow-x:auto}
     # ── Issue card ────────────────────────────────────────────────────────────
 
     def _issue_card(self, i: Dict, file_path: str) -> str:
+        """
+        Render one issue as a card: severity/rule/title header with
+        category and layer chips, the code snippet block, and the
+        "what's wrong" / "how to fix" sections.
+        """
         sev       = i.get("severity",    "INFO")
         rule      = _html.escape(i.get("rule_id",     ""))
         title     = _html.escape(i.get("title",       ""))
@@ -678,6 +720,11 @@ pre.code-lines{margin:0;padding:8px 0;overflow-x:auto}
         lang:      str,
         severity:  str,
     ) -> str:
+        """
+        Render the dark-themed code snippet block, with the violation
+        line(s) highlighted in a severity-tinted background. Renders a
+        "source not available" placeholder when *snippet* is empty.
+        """
         hl_bg = _SEV_HIGHLIGHT_BG.get(severity, "rgba(107,114,128,.12)")
         file_short = _html.escape(Path(file_path).name if file_path else "")
         lang_esc   = _html.escape(lang.upper() if lang else "")

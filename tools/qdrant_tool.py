@@ -37,6 +37,12 @@ BATCH_SIZE      = 100   # points per upsert request
 
 
 def _get_qdrant_client():
+    """
+    Construct a QdrantClient from config.QDRANT_URL / config.QDRANT_API_KEY.
+
+    Raises:
+        ImportError: If the qdrant-client package is not installed.
+    """
     try:
         from qdrant_client import QdrantClient  # pip install qdrant-client
         return QdrantClient(
@@ -341,6 +347,7 @@ class QdrantTool:
         )
 
     def _get_client(self):
+        """Lazily construct and cache the QdrantClient on first use."""
         if self._client is None:
             self._client = _get_qdrant_client()
         return self._client

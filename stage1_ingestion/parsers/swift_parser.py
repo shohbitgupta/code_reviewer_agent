@@ -96,6 +96,17 @@ class SwiftParser(BaseParser):
         return "swift"
 
     def parse(self, source: str, raw_lines: List[str]) -> List[ParsedSymbol]:
+        """
+        Parse Swift source via regex heuristics into imports, types, and functions.
+
+        Args:
+            source:    Full file content as a single string.
+            raw_lines: Source split by newline (1-indexed when used with [i-1]).
+
+        Returns:
+            List[ParsedSymbol] — never raises; unmatched lines are simply
+            skipped by the regex patterns.
+        """
         symbols: List[ParsedSymbol] = []
         symbols.extend(self._imports(raw_lines))
         symbols.extend(self._types_and_funcs(source, raw_lines))
@@ -133,6 +144,24 @@ class SwiftParser(BaseParser):
         return result
 
     def _types_and_funcs(self, source: str, raw_lines: List[str]) -> List[ParsedSymbol]:
+        """
+        Single-pass line scan emitting class_head and function/method symbols.
+
+        Tracks the innermost enclosing type name so functions are tagged as
+        methods with the correct parent_symbol. For type declarations, also
+        resolves base classes/protocols from the inline ': Base, Proto' clause
+        and — since Swift permits generic constraints on a following line —
+        scans up to 5 lines ahead for a multi-line `where` clause, folding any
+        constrained protocol conformances into the bases list.
+
+        Args:
+            source:    Full file content as a single string.
+            raw_lines: Source split by newline (1-indexed when used with [i-1]).
+
+        Returns:
+            List[ParsedSymbol] with symbol_type "class_head", "function", or
+            "method".
+        """
         symbols: List[ParsedSymbol] = []
         current_type: Optional[str] = None
 

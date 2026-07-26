@@ -224,4 +224,5 @@ class BM25Index:
         return idx
 
     def __len__(self) -> int:
+        """Return the number of chunks currently indexed."""
         return len(self._chunk_ids)

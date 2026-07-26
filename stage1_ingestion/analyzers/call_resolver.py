@@ -339,6 +339,7 @@ def _entry_to_resolved_call(
     entry: SymbolEntry,
     confidence: float,
 ) -> ResolvedCall:
+    """Build a ResolvedCall from a matched SymbolEntry at the given confidence level."""
     return ResolvedCall(
         callee_name=callee_name,
         resolved_chunk_id=entry.chunk_id,  # may be None until link_chunks() is called

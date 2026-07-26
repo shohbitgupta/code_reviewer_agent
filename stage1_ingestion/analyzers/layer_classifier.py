@@ -273,6 +273,7 @@ class LayerClassifier:
 
     # Keep old single-value helpers as thin wrappers for any remaining callers.
     def _layer_from_bases(self, file_path: str, symbol_table: ProjectSymbolTable) -> str:
+        """Return the single highest-priority layer from base-class signals (legacy single-label variant of _layers_from_bases)."""
         layers = self._layers_from_bases(file_path, symbol_table)
         if not layers:
             return "unknown"
@@ -283,6 +284,7 @@ class LayerClassifier:
 
     @staticmethod
     def _layer_from_path(file_path: str) -> str:
+        """Return the layer of the first matching path segment (legacy single-label variant of _layers_from_path)."""
         parts = file_path.replace("\\", "/").split("/")
         for part in parts:
             segment = part.lower().rsplit(".", 1)[0]

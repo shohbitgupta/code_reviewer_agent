@@ -85,6 +85,7 @@ class Rule:
         return f"[{self.rule_id}] ({self.severity.value}) {self.title}"
 
     def to_dict(self) -> dict:
+        """Serialise to a plain dict (JSON-friendly; Severity enum → its string value)."""
         return {
             "rule_id":     self.rule_id,
             "language":    self.language,
@@ -121,6 +122,20 @@ class StandardsParser:
     _META_LINE = re.compile(r"^\s*-\s+\*\*(\w[\w\s]*?)\*\*:\s*(.+)$")
 
     def parse(self, text: str) -> List[Rule]:
+        """
+        Parse a standards markdown document into a list of Rule objects.
+
+        Walks the text line by line, tracking the current section (category
+        fallback) and the currently-open rule block; each "### RULE_ID —
+        Title" heading starts a new Rule, which is flushed to *rules* when
+        the next heading (or EOF) is reached.
+
+        Args:
+            text: Full contents of one standards *.md file.
+
+        Returns:
+            One Rule per "### RULE_ID — Title" heading found.
+        """
         rules: List[Rule] = []
         lines = text.splitlines()
 
@@ -269,6 +284,11 @@ class StandardsLoader:
 
     Adding a new language requires only dropping a new `standards/<lang>.md`
     file — no code changes needed.
+
+    Args:
+        standards_dir:  Optional override for the rules directory (takes
+                         precedence over the default `stage2_standards/rules/`).
+        standards_path: Optional override for the legacy single-file fallback.
     """
 
     def __init__(
@@ -280,6 +300,13 @@ class StandardsLoader:
         self._file = standards_path
 
     def load(self) -> List[Rule]:
+        """
+        Load and parse Rule objects using the resolution order documented
+        on this class.
+
+        Returns:
+            All parsed rules, or an empty list if no standards source was found.
+        """
         parser = StandardsParser()
         rules:  List[Rule] = []
 
@@ -331,6 +358,7 @@ class StandardsLoader:
 
     @staticmethod
     def _load_file(path: Path, parser: StandardsParser) -> List[Rule]:
+        """Parse *path*; returns [] (and logs the error) if it cannot be read."""
         try:
             text  = path.read_text(encoding="utf-8")
             rules = parser.parse(text)
@@ -359,6 +387,7 @@ class StandardsLoader:
 
     @staticmethod
     def critical_and_high(rules: List[Rule]) -> List[Rule]:
+        """Return only CRITICAL and HIGH severity rules."""
         return [r for r in rules if r.severity in (Severity.CRITICAL, Severity.HIGH)]
 
 

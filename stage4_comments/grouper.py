@@ -62,10 +62,12 @@ class CommentGroup:
 
     @property
     def issue_ids(self) -> List[str]:
+        """List of ReviewIssue.issue_id values covered by this group."""
         return [i.issue_id for i in self.issues]
 
     @property
     def language(self) -> str:
+        """Source language of the group's issues, or "" if the group is empty."""
         return self.issues[0].language if self.issues else ""
 
 
@@ -133,6 +135,7 @@ def _make_group(
     bucket:    str,
     issues:    List[ReviewIssue],
 ) -> CommentGroup:
+    """Build a CommentGroup from *issues*, taking the highest severity present as dominant."""
     dominant = min(issues, key=lambda i: _SEVERITY_ORDER.get(i.severity, 99))
     return CommentGroup(
         group_id  = str(uuid.uuid4()),

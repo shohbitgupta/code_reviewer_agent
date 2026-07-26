@@ -52,6 +52,22 @@ class PythonParser(BaseParser):
         return "python"
 
     def parse(self, source: str, raw_lines: List[str]) -> List[ParsedSymbol]:
+        """
+        Parse Python source into grouped imports and top-level/class symbols.
+
+        Uses ast.parse() for full-fidelity parsing; on SyntaxError the file is
+        treated as unparseable so the chunker falls back to sliding-window
+        chunking. Classes are emitted as a CLASS_HEAD symbol (signature and
+        docstring only) followed by each method as an independent symbol
+        (see module docstring for the two-pass rationale).
+
+        Args:
+            source:    Full file content as a single string.
+            raw_lines: Source split by newline (1-indexed when used with [i-1]).
+
+        Returns:
+            List[ParsedSymbol] — empty list on a SyntaxError, never None.
+        """
         try:
             tree = ast.parse(source)
         except SyntaxError as exc:
@@ -145,6 +161,22 @@ class PythonParser(BaseParser):
         raw_lines: List[str],
         parent_name: Optional[str],
     ) -> Optional[ParsedSymbol]:
+        """
+        Build a ParsedSymbol for a function or method definition.
+
+        Records decorators (via ast.unparse when available) and the set of
+        called symbol names, deduplicated and with common builtins excluded
+        (see SKIP_CALLS).
+
+        Args:
+            node:        The FunctionDef or AsyncFunctionDef node.
+            raw_lines:   Full file source split by newline.
+            parent_name: Enclosing class name, or None for a top-level function.
+
+        Returns:
+            A ParsedSymbol, or None if the name is a trivial dunder method
+            (see SKIP_SYMBOL_NAMES).
+        """
         if node.name in SKIP_SYMBOL_NAMES:
             return None
 
@@ -176,6 +208,15 @@ class PythonParser(BaseParser):
 
     @staticmethod
     def _call_name(node: ast.Call) -> Optional[str]:
+        """
+        Resolve the callee name for a Call node.
+
+        Plain calls return the bare name; single-level attribute calls return
+        "receiver.attr" (e.g. "self.save"); chained attribute calls (where the
+        receiver is itself an Attribute, e.g. "a.b.c()") return only the final
+        attribute name. Returns None for calls whose target isn't a Name or
+        Attribute (e.g. calling the result of a subscript or another call).
+        """
         if isinstance(node.func, ast.Name):
             return node.func.id
         if isinstance(node.func, ast.Attribute):
@@ -186,6 +227,14 @@ class PythonParser(BaseParser):
 
     @staticmethod
     def _bases(node: ast.ClassDef) -> List[str]:
+        """
+        Return base class names as source-text strings.
+
+        Prefers ast.unparse (Python 3.9+) for full-fidelity output, which
+        correctly handles generics and dotted paths; falls back to
+        reconstructing simple Name and single-level Attribute bases on older
+        interpreters where ast.unparse is unavailable.
+        """
         result = []
         for b in node.bases:
             if hasattr(ast, "unparse"):

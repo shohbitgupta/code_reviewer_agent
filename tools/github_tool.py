@@ -171,12 +171,19 @@ class GitHubTool:
     # ── Private HTTP helpers ──────────────────────────────────────────────────
 
     def _headers(self) -> Dict[str, str]:
+        """Build the base request headers, adding a Bearer Authorization header when a token is set."""
         h = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         if self._token:
             h["Authorization"] = f"Bearer {self._token}"
         return h
 
     def _get(self, url: str) -> Dict:
+        """
+        Issue an authenticated GET and return the parsed JSON body.
+
+        Raises:
+            RuntimeError: Wrapping the response body on any HTTP error.
+        """
         req = urllib.request.Request(url, headers=self._headers())
         try:
             with urllib.request.urlopen(req, timeout=20) as resp:
@@ -186,6 +193,12 @@ class GitHubTool:
             raise RuntimeError(f"GitHub GET {url} → {exc.code}: {body}") from exc
 
     def _post(self, url: str, payload: Dict) -> Dict:
+        """
+        Issue an authenticated JSON POST and return the parsed JSON body.
+
+        Raises:
+            RuntimeError: Wrapping the response body on any HTTP error.
+        """
         data = json.dumps(payload).encode()
         req  = urllib.request.Request(
             url, data=data, headers={**self._headers(), "Content-Type": "application/json"},

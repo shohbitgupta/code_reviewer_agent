@@ -315,6 +315,7 @@ class DependencyExtractor:
         pf:        ParsedFile,
         chunk_map: Dict[str, CodeChunk],
     ) -> Optional[DependencyEdge]:
+        """Build the BELONGS_TO edge linking a method symbol to its parent class_head chunk, or None if either endpoint is unresolved."""
         from_chunk = self._resolve_symbol(
             sym.name, pf.file_meta.file_path, sym.symbol_type, chunk_map
         )
@@ -339,6 +340,7 @@ class DependencyExtractor:
         by_name:    Dict[str, List[CodeChunk]] = None,
         caller_imports: Optional[Set[str]] = None,
     ) -> Optional[DependencyEdge]:
+        """Build the CALLS edge from a symbol's call site to the resolved target chunk, or None if the callee can't be resolved."""
         from_chunk = self._resolve_symbol(
             sym.name, pf.file_meta.file_path, sym.symbol_type, chunk_map
         )
@@ -364,6 +366,7 @@ class DependencyExtractor:
         pf:        ParsedFile,
         chunk_map: Dict[str, CodeChunk],
     ) -> Optional[DependencyEdge]:
+        """Build the IMPORTS edge from a file's import chunk to the resolved target module chunk, or None if the import path can't be resolved to a local file."""
         from_chunk = self._resolve_symbol(
             "imports", pf.file_meta.file_path, "import", chunk_map
         )
@@ -389,6 +392,7 @@ class DependencyExtractor:
         pf:        ParsedFile,
         chunk_map: Dict[str, CodeChunk],
     ) -> Optional[DependencyEdge]:
+        """Build the INHERITS edge from a class_head chunk to its resolved base class chunk, or None if the base class can't be resolved."""
         from_chunk = self._resolve_symbol(
             sym.name, pf.file_meta.file_path, "class_head", chunk_map
         )
@@ -528,6 +532,7 @@ class DependencyExtractor:
         to_sym:     str,
         raw_import: Optional[str] = None,
     ) -> DependencyEdge:
+        """Construct a DependencyEdge between two chunks, computing the is_cross_file / is_cross_domain flags."""
         is_cross_file   = from_chunk.file_path != to_chunk.file_path
         is_cross_domain = DependencyExtractor._cross_domain(
             from_chunk.file_path, to_chunk.file_path
@@ -558,6 +563,7 @@ class DependencyExtractor:
 
     @staticmethod
     def _deduplicate(edges: List[DependencyEdge]) -> List[DependencyEdge]:
+        """Remove duplicate edges sharing the same (from_chunk_id, to_chunk_id, edge_type) key."""
         seen:   Set[Tuple] = set()
         unique: List[DependencyEdge] = []
         for e in edges:

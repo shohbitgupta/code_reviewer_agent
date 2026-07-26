@@ -99,6 +99,11 @@ class CommentFormatter:
     # ── GitHub ────────────────────────────────────────────────────────────────
 
     def _render_github(self, group: CommentGroup) -> str:
+        """
+        Render GitHub Flavored Markdown: a single > [!NOTE|WARNING|CAUTION]
+        admonition (chosen from group.severity) containing either the one
+        issue in the group or a bulleted sub-list when the group has multiple.
+        """
         issues = _sort_issues(group.issues)
         admonition = _GH_ADMONITION.get(group.severity, "NOTE")
         lines: List[str] = []
@@ -145,6 +150,11 @@ class CommentFormatter:
     # ── GitLab ────────────────────────────────────────────────────────────────
 
     def _render_gitlab(self, group: CommentGroup) -> str:
+        """
+        Render standard CommonMark: one bold header + body per issue,
+        separated by horizontal rules. GitLab does not support GFM
+        admonitions, so no > [!NOTE]-style callout is used.
+        """
         issues = _sort_issues(group.issues)
         lines: List[str] = []
 
@@ -169,6 +179,10 @@ class CommentFormatter:
     # ── Jira ──────────────────────────────────────────────────────────────────
 
     def _render_jira(self, group: CommentGroup) -> str:
+        """
+        Render Jira wiki markup: h4. headings with a {colour} macro keyed
+        off severity, instead of Markdown headers and emoji.
+        """
         issues = _sort_issues(group.issues)
         lines: List[str] = []
 
@@ -201,6 +215,11 @@ class CommentFormatter:
     # ── Plain text ────────────────────────────────────────────────────────────
 
     def _render_text(self, group: CommentGroup) -> str:
+        """
+        Render plain ASCII with textwrap-wrapped descriptions and no
+        markdown at all — for CLI output or email where GFM/wiki markup
+        would render as literal syntax.
+        """
         issues = _sort_issues(group.issues)
         sep    = "─" * 60
         lines: List[str] = [sep]

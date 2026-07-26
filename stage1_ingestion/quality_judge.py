@@ -157,6 +157,7 @@ _LANG_THRESHOLDS: Dict[str, Dict[str, tuple]] = {
 
 @dataclass
 class DimensionResult:
+    """Scored outcome of a single IQ dimension, including the language-adjusted thresholds it was measured against."""
     id:              str    # "IQ-01" … "IQ-07"
     name:            str
     status:          str    # "PASS" | "WARN" | "FAIL" | "SKIP"
@@ -171,6 +172,7 @@ class DimensionResult:
 
 @dataclass
 class IngestionQualityReport:
+    """Final PROCEED/WARN/ABORT verdict for a pipeline run, with the per-dimension breakdown that produced it."""
     overall_score:    int                   # 0–100 weighted average
     decision:         str                   # "PROCEED" | "WARN" | "ABORT"
     dimensions:       List[DimensionResult]
@@ -220,7 +222,22 @@ class IngestionQualityJudge:
         dep_graph:   Any,           # DependencyGraph
         skip_qdrant: bool = False,
     ) -> IngestionQualityReport:
+        """
+        Score all 7 IQ dimensions and produce an overall PROCEED / WARN / ABORT decision.
 
+        Args:
+            qm:          QualityMetrics computed from the pipeline's parsing,
+                         chunking, and dependency-resolution outputs.
+            stats:       The pipeline's stats dict (state["ingestion_stats"]).
+            chunks:      All CodeChunks produced by the run.
+            dep_graph:   The built DependencyGraph.
+            skip_qdrant: True when Step 1k was skipped — IQ-07 (Embedding
+                         Coverage) is scored as SKIP/neutral in that case.
+
+        Returns:
+            IngestionQualityReport with the overall score, decision, and the
+            per-dimension results used to compute it.
+        """
         language = _resolve_language(stats)
 
         dims = [
@@ -501,6 +518,7 @@ class IngestionQualityJudge:
     # ── Logging ───────────────────────────────────────────────────────────────
 
     def _log(self, report: IngestionQualityReport) -> None:
+        """Print a formatted quality summary (per-dimension score bars, overall score, decision) to the logger."""
         dec_symbol = {"PROCEED": "✓", "WARN": "!", "ABORT": "✗"}[report.decision]
         lines = [
             "",

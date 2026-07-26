@@ -142,6 +142,7 @@ class ParsedFile:
 # ── Step 1g — Chunker ─────────────────────────────────────────────────────────
 
 class ChunkType(str, Enum):
+    """The kind of code unit a CodeChunk represents, per the 3-layer chunking model."""
     MODULE     = "module"      # Layer 1 — file-level, always present
     FUNCTION   = "function"    # Layer 2 — top-level function
     METHOD     = "method"      # Layer 2 — method inside a class
@@ -321,6 +322,7 @@ class RuleViolation:
     line:        int    # 1-indexed line where the violation begins
 
     def to_dict(self) -> dict:
+        """Serialise to a plain dict (used for JSON/JSONL persistence)."""
         return {
             "rule_id":     self.rule_id,
             "severity":    self.severity,
@@ -360,6 +362,7 @@ class QualityMetrics:
 # ── Step 1i — Dependency Extraction ──────────────────────────────────────────
 
 class EdgeType(str, Enum):
+    """The relationship a DependencyEdge represents between two CodeChunk nodes."""
     BELONGS_TO = "BELONGS_TO"  # method → class_head
     CALLS      = "CALLS"       # function/method → called function/method
     IMPORTS    = "IMPORTS"     # file import chunk → MODULE chunk of imported file
@@ -430,6 +433,7 @@ class ReviewIssue:
         confidence:     float = 1.0,
         layer:          str   = "unknown",
     ) -> "ReviewIssue":
+        """Factory: create a ReviewIssue with a fresh UUID for issue_id."""
         return ReviewIssue(
             issue_id       = str(uuid.uuid4()),
             chunk_id       = chunk_id,
@@ -449,6 +453,7 @@ class ReviewIssue:
         )
 
     def to_dict(self) -> dict:
+        """Serialise to a plain dict (used for JSON/JSONL persistence)."""
         return {
             "issue_id":       self.issue_id,
             "chunk_id":       self.chunk_id,
@@ -469,6 +474,7 @@ class ReviewIssue:
 
     @classmethod
     def from_dict(cls, d: dict) -> "ReviewIssue":
+        """Deserialise from a plain dict produced by to_dict()."""
         return cls(**d)
 
 
@@ -517,6 +523,7 @@ class ReviewComment:
         language:     str  = "",
         polished:     bool = False,
     ) -> "ReviewComment":
+        """Factory: create a ReviewComment with a fresh UUID for comment_id."""
         return ReviewComment(
             comment_id   = str(uuid.uuid4()),
             file_path    = file_path,
@@ -532,6 +539,7 @@ class ReviewComment:
         )
 
     def to_dict(self) -> dict:
+        """Serialise to a plain dict (used for JSON/JSONL persistence)."""
         return {
             "comment_id":   self.comment_id,
             "file_path":    self.file_path,
@@ -548,4 +556,5 @@ class ReviewComment:
 
     @classmethod
     def from_dict(cls, d: dict) -> "ReviewComment":
+        """Deserialise from a plain dict produced by to_dict()."""
         return cls(**d)

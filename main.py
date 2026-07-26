@@ -76,6 +76,13 @@ def _c(key: str, text: str) -> str:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
+    """
+    Build the CLI argument parser for the code-reviewer entry point.
+
+    Returns:
+        Configured ArgumentParser with the repo_url positional argument plus
+        review, skip, and output flags.
+    """
     p = argparse.ArgumentParser(
         prog="code-reviewer",
         description="AI-powered code reviewer agent",
@@ -106,6 +113,12 @@ examples:
 
 
 def main() -> None:
+    """
+    Parse CLI arguments and dispatch to the ingestion-only or full-review path.
+
+    Ingestion-only mode runs when neither --review nor --pr is given;
+    otherwise the full 5-stage review pipeline is executed.
+    """
     args = build_parser().parse_args()
 
     if args.verbose:
@@ -125,6 +138,13 @@ def main() -> None:
 # ── Ingestion-only path ───────────────────────────────────────────────────────
 
 def _run_ingestion_only(args, dry: bool) -> None:
+    """
+    Run Stage 1 ingestion only (no standards/review/comments/report) and print a summary.
+
+    Args:
+        args: Parsed CLI namespace (repo_url, skip_summaries, skip_qdrant, ...).
+        dry: If True, forces skip_summaries and skip_qdrant regardless of flags.
+    """
     from stage1_ingestion.agent import run_ingestion
 
     state = {"repo_url": args.repo_url}
@@ -144,6 +164,18 @@ def _run_ingestion_only(args, dry: bool) -> None:
 # ── Full pipeline path ────────────────────────────────────────────────────────
 
 def _run_full_review(args, dry: bool) -> None:
+    """
+    Run the full 5-stage review pipeline and print the final summary.
+
+    Builds the LLM client (unless dry-run), resolves PR base/head SHAs when
+    --pr is given, constructs the initial ReviewState, and drives it through
+    orchestration.graph.ReviewPipeline. Opens the HTML report in a browser
+    afterward when --open is set (or auto-open conditions are met).
+
+    Args:
+        args: Parsed CLI namespace (repo_url, pr, platform, skip_* flags, ...).
+        dry: If True, disables the LLM client, Qdrant, and GitHub posting.
+    """
     from orchestration.graph import ReviewPipeline
     from orchestration.state import make_state
 
@@ -221,6 +253,7 @@ def _fetch_pr_shas(repo_url: str, pr_number: int):
 # ── Terminal output ───────────────────────────────────────────────────────────
 
 def _print_ingestion_summary(state: dict) -> None:
+    """Print a formatted summary of state["ingestion_stats"] to stdout."""
     s = state.get("ingestion_stats", {})
     print()
     print(_c("BOLD", "── Ingestion complete " + "─" * 40))
@@ -234,6 +267,7 @@ def _print_ingestion_summary(state: dict) -> None:
 
 
 def _print_review_summary(state: dict, elapsed: float) -> None:
+    """Print a formatted summary of the full review run: severity breakdown, chunk/comment counts, and elapsed time."""
     i_stats = state.get("ingestion_stats", {})
     r_stats = state.get("review_stats",    {})
     c_stats = state.get("comment_stats",   {})
@@ -282,6 +316,7 @@ def _should_auto_open() -> bool:
 
 
 def _open_in_browser(path: str) -> None:
+    """Open *path* with the OS default handler via `open`; failures are silently ignored."""
     try:
         subprocess.Popen(["open", path])
         print(_c("DIM", "  Opening report in browser…"))
@@ -290,6 +325,7 @@ def _open_in_browser(path: str) -> None:
 
 
 def _die(msg: str) -> None:
+    """Print *msg* as a fatal error to stderr and exit the process with status 1."""
     print(_c("CRITICAL", f"\n[ERROR] {msg}"), file=sys.stderr)
     sys.exit(1)
 

@@ -46,12 +46,24 @@ class RustParser(BaseParser):
         return "rust"
 
     def parse(self, source: str, raw_lines: List[str]) -> List[ParsedSymbol]:
+        """
+        Parse Rust source via regex heuristics into use groups and items.
+
+        Args:
+            source:    Full file content as a single string.
+            raw_lines: Source split by newline (1-indexed when used with [i-1]).
+
+        Returns:
+            List[ParsedSymbol] — never raises; unmatched lines are simply
+            skipped by the regex patterns.
+        """
         symbols: List[ParsedSymbol] = []
         symbols.extend(self._uses(raw_lines))
         symbols.extend(self._items(raw_lines))
         return symbols
 
     def _uses(self, raw_lines: List[str]) -> List[ParsedSymbol]:
+        """Group contiguous `use` statement lines into single import symbols."""
         use_lines = [
             i + 1 for i, line in enumerate(raw_lines)
             if _USE_RE.match(line.strip())
@@ -86,6 +98,15 @@ class RustParser(BaseParser):
         return result
 
     def _items(self, raw_lines: List[str]) -> List[ParsedSymbol]:
+        """
+        Single-pass line scan emitting class_head and function/method symbols.
+
+        Tracks the innermost enclosing type name — set by a struct/enum/trait
+        declaration or by an `impl`/`impl Trait for Type` block — so that `fn`
+        declarations are tagged as methods with the correct parent_symbol.
+        `impl` blocks themselves do not produce a symbol; they only update the
+        tracked type name for subsequent `fn` lines.
+        """
         symbols: List[ParsedSymbol] = []
         current_type: Optional[str] = None
 
@@ -135,6 +156,7 @@ class RustParser(BaseParser):
 
     @staticmethod
     def _find_block_end(raw_lines: List[str], start_line: int) -> int:
+        """Brace-depth scan to find the closing } of a Rust block."""
         depth = 0
         for i, line in enumerate(raw_lines[start_line - 1:], start=start_line):
             depth += line.count("{") - line.count("}")

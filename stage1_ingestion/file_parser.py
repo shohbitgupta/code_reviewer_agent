@@ -216,6 +216,7 @@ class FileParser:
 # ── Module-level cache helpers (no class state needed) ────────────────────────
 
 def _cache_path(file_meta: FileMeta, cache_dir: Path) -> Path:
+    """Return the JSON cache file path for file_meta, keyed by an MD5 digest of its absolute path."""
     # Use MD5 (not hash()) — hash() is randomised per-process in Python 3.3+
     import hashlib
     digest = hashlib.md5(file_meta.absolute_path.encode()).hexdigest()[:16]
@@ -227,6 +228,7 @@ def _load_cache(
     cache_dir: Path,
     raw_lines: List[str],
 ) -> Optional[ParsedFile]:
+    """Return the cached ParsedFile for file_meta, or None on a cache miss or a corrupt cache entry."""
     path = _cache_path(file_meta, cache_dir)
     if not path.exists():
         return None
@@ -245,6 +247,7 @@ def _load_cache(
 
 
 def _save_cache(result: ParsedFile, cache_dir: Optional[Path]) -> None:
+    """Persist a parse result to the JSON cache; no-op if cache_dir is None or the write fails."""
     if cache_dir is None:
         return
     path = _cache_path(result.file_meta, cache_dir)
@@ -276,6 +279,7 @@ def _save_cache(result: ParsedFile, cache_dir: Optional[Path]) -> None:
 
 
 def _read_lines(absolute_path: str) -> List[str]:
+    """Read a file's contents as a list of lines, returning [] on any OSError."""
     try:
         return Path(absolute_path).read_text(errors="ignore").splitlines()
     except OSError:

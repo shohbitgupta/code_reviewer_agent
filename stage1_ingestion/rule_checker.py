@@ -1,25 +1,41 @@
 """
-Step 1g-RC — Mechanical Rule Checker (Priority 2)
+Step 1g-RC — Mechanical Rule Checker
 
-Runs auto_check=True coding-standard rules against every CodeChunk immediately
-after chunking (Step 1g), before any LLM is involved.  Violations are stored
-on CodeChunk.pre_flagged_violations so Stage 3 can skip the LLM for chunks
-that only have mechanical violations.
+Runs deterministic coding-standard rules against every CodeChunk immediately
+after chunking (Step 1g), before any LLM token is spent.  Violations are
+stored on ``CodeChunk.pre_flagged_violations`` so that Stage 3 can surface
+them even when the LLM endpoint is unavailable, and avoid redundant analysis
+for chunks that already have a clear mechanical finding.
 
 Rules implemented
 -----------------
-GEN001  Function/method length > 50 lines              (MEDIUM)
-GEN002  Magic numbers in non-constant code              (LOW)
-SEC001  Hardcoded secrets (password=, api_key=, etc.)  (CRITICAL)
-PY001   Missing type hints on public Python functions   (LOW)
+GEN001  Function/method length > 50 non-blank lines        (MEDIUM)
+GEN002  Magic numbers in non-constant code                  (LOW)
+SEC001  Hardcoded secrets (password=, api_key=, …)         (CRITICAL)
+PY001   Missing type hints on public Python functions       (LOW)
+CP013   Long parameter list (> 5 parameters)               (MEDIUM)
+SW008   Direct network call from ViewController            (HIGH)
+CP012   God class (> 10 methods on one class) [class-level] (HIGH)
 
-Adding a new rule: subclass MechanicalRule and append to _RULES in
-MechanicalRuleChecker.__init__.  No other file needs to change.
+Per-chunk vs. class-level rules
+--------------------------------
+Most rules implement ``check(chunk)`` and are called once per chunk.
+CP012 (God Class) requires cross-chunk context — it is applied as a
+post-pass in ``MechanicalRuleChecker.check_many()`` after all per-chunk
+checks complete.  Its violation is stamped on the CLASS_HEAD chunk.
 
-Usage:
-    checker    = MechanicalRuleChecker()
-    violations = checker.check(chunk)
-    chunk.pre_flagged_violations = violations
+Adding a new rule
+-----------------
+1. For a per-chunk rule: subclass ``MechanicalRule``, implement ``check()``,
+   and append an instance to ``_rules`` in ``MechanicalRuleChecker.__init__``.
+2. For a class-level rule: add a ``_check_<name>`` method to
+   ``MechanicalRuleChecker`` and call it from ``check_many()``.
+No other file needs to change.
+
+Usage::
+
+    checker = MechanicalRuleChecker()
+    checker.check_many(chunks)   # mutates chunk.pre_flagged_violations in-place
 """
 
 from __future__ import annotations

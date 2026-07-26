@@ -1,4 +1,11 @@
 # Backward-compatibility shim — import from core.config instead.
+"""
+Backward-compatibility shim.
+
+Re-exports all configuration constants from core.config so legacy
+`import config` statements keep working. Prefer importing from
+core.config directly in new code.
+"""
 from core.config import *  # noqa: F401, F403
 from core import config as _c
 SUMMARY_MODEL        = _c.SUMMARY_MODEL

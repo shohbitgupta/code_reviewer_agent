@@ -209,6 +209,7 @@ class CommentWriter:
         base_body:      str,
         source_snippet: str,
     ) -> str:
+        """Assemble the polish-call user message from the group's violations, the draft body, and any source snippet."""
         parts = [
             f"Platform: {self._platform}",
             f"File: {group.file_path} (lines {group.line}–{group.end_line})",
@@ -237,6 +238,7 @@ class CommentWriter:
         return "\n".join(parts)
 
     def _call_with_retry(self, user_msg: str) -> str:
+        """Exponential-backoff retry for transient API errors; 400/401/403 are re-raised immediately."""
         last_exc: Optional[Exception] = None
         backoff = _INITIAL_BACKOFF
 
@@ -255,6 +257,7 @@ class CommentWriter:
         raise last_exc  # type: ignore[misc]
 
     def _call_once(self, user_msg: str) -> str:
+        """Single messages.create() call for the polish request; extracts the write_comment tool_use body."""
         response = self._client.messages.create(
             model       = self._model,
             max_tokens  = 512,
@@ -292,10 +295,12 @@ class CommentWriter:
 
     @staticmethod
     def _make_cache_key(group: CommentGroup, base_body: str) -> str:
+        """Cache key = md5(group_id + first 200 chars of the draft body)."""
         payload = group.group_id + base_body[:200]
         return hashlib.md5(payload.encode()).hexdigest()
 
     def _load_cache(self, key: str) -> Optional[str]:
+        """Load a previously polished body for *key*; returns None on any miss or read error."""
         path = self._cache_dir / f"{key}.pkl"
         if not path.exists():
             return None
@@ -306,6 +311,7 @@ class CommentWriter:
             return None
 
     def _save_cache(self, key: str, data: str) -> None:
+        """Persist the polished body under *key*; write failures are logged and swallowed."""
         path = self._cache_dir / f"{key}.pkl"
         try:
             with self._cache_lock, path.open("wb") as f:

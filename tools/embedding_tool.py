@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 # ── Lazy imports — only the active backend is imported ───────────────────────
 
 def _get_voyage_client():
+    """
+    Construct a Voyage AI client from VOYAGE_API_KEY.
+
+    Raises:
+        RuntimeError: If VOYAGE_API_KEY is not set.
+        ImportError: If the voyageai package is not installed.
+    """
     try:
         import voyageai  # pip install voyageai
         api_key = os.getenv("VOYAGE_API_KEY")
@@ -48,6 +55,13 @@ def _get_voyage_client():
 
 
 def _get_openai_client():
+    """
+    Construct an OpenAI client from OPENAI_API_KEY.
+
+    Raises:
+        RuntimeError: If OPENAI_API_KEY is not set.
+        ImportError: If the openai package is not installed.
+    """
     try:
         from openai import OpenAI  # pip install openai
         api_key = os.getenv("OPENAI_API_KEY")
@@ -163,6 +177,7 @@ class EmbeddingTool:
     # ── Lazy client init ──────────────────────────────────────────────────────
 
     def _get_client(self):
+        """Lazily construct and cache the backend client (Voyage or OpenAI) on first use."""
         if self._client is None:
             if self.backend == "voyage":
                 self._client = _get_voyage_client()

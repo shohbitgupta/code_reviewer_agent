@@ -74,12 +74,14 @@ _DEFAULTS = {
 
 @dataclass
 class _TextBlock:
+    """A plain-text content block, matching the shape of an Anthropic text block."""
     type: str = "text"
     text: str = ""
 
 
 @dataclass
 class _ToolUseBlock:
+    """A tool-call content block, matching the shape of an Anthropic tool_use block."""
     type:  str  = "tool_use"
     name:  str  = ""
     input: Dict = field(default_factory=dict)
@@ -87,6 +89,7 @@ class _ToolUseBlock:
 
 @dataclass
 class _UnifiedResponse:
+    """Anthropic-compatible response returned by every backend's messages.create()."""
     content:     List       # List[_TextBlock | _ToolUseBlock]
     model:       str = ""
     stop_reason: str = "end_turn"
@@ -162,6 +165,20 @@ class _AnthropicSyncMessages:
         tool_choice = None,
         **kwargs,
     ):
+        """
+        Forward an Anthropic-style request straight to anthropic.messages.create().
+
+        Args:
+            model: Model ID override; defaults to the client's configured model.
+            max_tokens: Maximum tokens to generate.
+            system: System prompt.
+            messages: Anthropic-style message list.
+            tools: Optional tool schema list (Anthropic format).
+            tool_choice: Optional tool_choice directive (Anthropic format).
+
+        Returns:
+            The raw anthropic SDK response object.
+        """
         kwargs_extra = {}
         if tools:
             kwargs_extra["tools"] = tools
@@ -194,6 +211,24 @@ class _OpenAISyncMessages:
         tool_choice = None,
         **kwargs,
     ):
+        """
+        Translate an Anthropic-style request into an OpenAI chat completion call.
+
+        Folds `system` into the message list as a leading "system" message,
+        converts `tools`/`tool_choice` to OpenAI's function-calling schema, and
+        wraps the OpenAI response back into an Anthropic-compatible shape.
+
+        Args:
+            model: Model ID override; defaults to the client's configured model.
+            max_tokens: Maximum tokens to generate.
+            system: System prompt, injected as the first message.
+            messages: Anthropic-style message list.
+            tools: Optional tool schema list (Anthropic format).
+            tool_choice: Optional tool_choice directive (Anthropic format).
+
+        Returns:
+            _UnifiedResponse mirroring the Anthropic SDK response shape.
+        """
         m = model or self._model
         oai_msgs = []
         if system:
@@ -236,6 +271,20 @@ class _AnthropicAsyncMessages:
         tool_choice = None,
         **kwargs,
     ):
+        """
+        Await an Anthropic-style request forwarded to anthropic.AsyncAnthropic.messages.create().
+
+        Args:
+            model: Model ID override; defaults to the client's configured model.
+            max_tokens: Maximum tokens to generate.
+            system: System prompt.
+            messages: Anthropic-style message list.
+            tools: Optional tool schema list (Anthropic format).
+            tool_choice: Optional tool_choice directive (Anthropic format).
+
+        Returns:
+            The raw anthropic SDK response object.
+        """
         kwargs_extra = {}
         if tools:
             kwargs_extra["tools"] = tools
@@ -268,6 +317,16 @@ class _OpenAIAsyncMessages:
         tool_choice = None,
         **kwargs,
     ):
+        """
+        Await the async equivalent of _OpenAISyncMessages.create().
+
+        Translates the Anthropic-style request into an OpenAI async chat
+        completion call and wraps the result back into an Anthropic-compatible
+        shape. See _OpenAISyncMessages.create() for parameter details.
+
+        Returns:
+            _UnifiedResponse mirroring the Anthropic SDK response shape.
+        """
         m = model or self._model
         oai_msgs = []
         if system:

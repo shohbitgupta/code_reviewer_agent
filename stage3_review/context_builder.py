@@ -89,6 +89,14 @@ class ContextBuilder:
     # ── Public ────────────────────────────────────────────────────────────────
 
     def build(self, chunk: CodeChunk) -> ReviewContext:
+        """
+        Assemble the full ReviewContext for *chunk*: nav-pointer expansion,
+        dependency callees, hybrid-retrieval similar chunks, and any
+        pre-computed architectural issues touching this chunk.
+
+        Returns:
+            A populated ReviewContext ready for format_context_for_prompt().
+        """
         ctx = ReviewContext(chunk=chunk)
 
         # 1. Navigation pointer expansion (purely in-memory)

@@ -443,6 +443,7 @@ class IngestionPipeline:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _edge_type_counts(edges) -> Dict[str, int]:
+    """Count edges by edge_type, returning a dict keyed by the edge_type string value."""
     counts: Dict[str, int] = {}
     for e in edges:
         key = e.edge_type.value

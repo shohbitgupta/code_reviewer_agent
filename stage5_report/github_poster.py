@@ -117,6 +117,11 @@ class GitHubPoster:
 
     @staticmethod
     def _build_review_body(report: Dict, state: Dict) -> str:
+        """
+        Render the review's top-level body: title, severity badges, the top
+        5 most frequent rule violations, and any evicted "summary"-type
+        ReviewComment bodies appended below a divider.
+        """
         summary = report.get("summary", {})
         by_sev  = summary.get("by_severity", {})
         total   = summary.get("total_issues", 0)

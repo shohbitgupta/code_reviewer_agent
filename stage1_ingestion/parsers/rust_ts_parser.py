@@ -102,6 +102,14 @@ class RustTsParser(TreeSitterParser):
         source_bytes: bytes,
         raw_lines: List[str],
     ) -> List[ParsedSymbol]:
+        """
+        Extract grouped `use` imports, then recursively walk items via
+        _extract_items(), starting outside any impl block.
+
+        Returns:
+            List[ParsedSymbol] combining import groups with class_head
+            (struct/enum/trait/type/impl) and function/method symbols.
+        """
         symbols: List[ParsedSymbol] = []
         root = tree.root_node
 
@@ -234,6 +242,16 @@ class RustTsParser(TreeSitterParser):
         raw_lines: List[str],
         outer_attrs: List[str],
     ) -> List[ParsedSymbol]:
+        """
+        Build a class_head ParsedSymbol for a struct/enum/trait/type item.
+
+        Base traits are only collected for `trait_item` nodes (via
+        _collect_trait_bounds); structs, enums, and type aliases never carry
+        bases in this grammar.
+
+        Returns:
+            A single-element list, or [] if the item has no resolvable name.
+        """
         name = self._get_type_identifier(node, source_bytes)
         if not name:
             return []
@@ -306,6 +324,16 @@ class RustTsParser(TreeSitterParser):
         parent_name: Optional[str],
         outer_attrs: List[str],
     ) -> List[ParsedSymbol]:
+        """
+        Build a function/method ParsedSymbol from a `function_item` node.
+
+        Tags `async fn` with an `@async` decorator (in addition to any outer
+        attributes such as `#[test]`), and classifies the symbol as "method"
+        with *parent_name* set when *inside_impl* is True, else "function".
+
+        Returns:
+            A single-element list, or [] if the function has no resolvable name.
+        """
         name = self._get_fn_name(node, source_bytes)
         if not name:
             return []

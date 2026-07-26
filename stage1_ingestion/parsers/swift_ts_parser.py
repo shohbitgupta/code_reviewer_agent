@@ -80,6 +80,14 @@ class SwiftTsParser(TreeSitterParser):
         source_bytes: bytes,
         raw_lines: List[str],
     ) -> List[ParsedSymbol]:
+        """
+        Extract grouped imports, then walk the CST for types and functions.
+
+        Returns:
+            List[ParsedSymbol] combining import groups (contiguous
+            import_declaration nodes, gap <= 1 blank line) with the
+            class_head/function/method symbols produced by _walk().
+        """
         symbols: List[ParsedSymbol] = []
         root = tree.root_node
 
@@ -124,6 +132,16 @@ class SwiftTsParser(TreeSitterParser):
         symbols: List[ParsedSymbol],
         current_type: Optional[str],
     ) -> None:
+        """
+        Recursively descend the CST, appending symbols to *symbols* in place.
+
+        Tracks *current_type* (the innermost enclosing class/struct/enum/
+        protocol/actor/extension name) so nested functions and computed
+        properties are emitted with the correct parent_symbol and
+        symbol_type "method" rather than "function". Container nodes with no
+        direct symbol match (e.g. an extension body) are recursed into
+        unconditionally so nested declarations are still discovered.
+        """
         for child in node.children:
             ntype = child.type
 

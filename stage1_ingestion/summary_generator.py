@@ -100,6 +100,7 @@ class SummaryGenerator:
     # ── Async core ────────────────────────────────────────────────────────────
 
     async def _run_async(self, chunks: List[CodeChunk]) -> List[CodeChunk]:
+        """Batch eligible chunks and summarise/embed them concurrently, bounded by SEMAPHORE_LIMIT; failed batches fall back to empty summaries."""
         eligible  = [c for c in chunks if self._should_summarise(c)]
         if not eligible:
             return chunks
@@ -160,6 +161,7 @@ class SummaryGenerator:
         return self._parse_response(raw_text, len(batch))
 
     def _build_batch_prompt(self, batch: List[CodeChunk]) -> str:
+        """Build the batched summarisation prompt, embedding each chunk's language, type, and truncated content."""
         items = "\n\n".join(
             f"--- Chunk {i+1}: {c.symbol_name} ({c.chunk_type.value}) ---\n"
             f"```{c.language}\n{c.content[:MAX_CONTENT_CHARS]}\n```"
@@ -192,6 +194,7 @@ class SummaryGenerator:
 
     @staticmethod
     def _should_summarise(chunk: CodeChunk) -> bool:
+        """True if chunk is a summarisable type, or a BLOCK chunk longer than MIN_BLOCK_LINES."""
         if chunk.chunk_type in SUMMARISE_TYPES:
             return True
         if chunk.chunk_type == ChunkType.BLOCK:
@@ -200,6 +203,7 @@ class SummaryGenerator:
         return False
 
     def _get_async_client(self):
+        """Lazily construct and cache the async LLM client from config on first use."""
         if self._client is not None:
             return self._client
         from tools.llm_client import LLMClientFactory

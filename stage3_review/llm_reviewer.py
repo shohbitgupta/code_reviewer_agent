@@ -234,11 +234,13 @@ class LLMReviewer:
         return f"{content_hash}_{rules_hash}_{model_tag}"
 
     def _cache_path(self, key: str) -> Optional[Path]:
+        """Return the pickle path for *key*, or None if caching is disabled."""
         if self._cache_dir is None:
             return None
         return self._cache_dir / f"{key}.pkl"
 
     def _load_cache(self, key: str) -> Optional[List[Dict]]:
+        """Load cached issue dicts for *key*; returns None on any miss or read error."""
         path = self._cache_path(key)
         if path is None or not path.exists():
             return None
@@ -250,6 +252,7 @@ class LLMReviewer:
             return None
 
     def _save_cache(self, key: str, data: List[Dict]) -> None:
+        """Persist *data* under *key*; write failures are logged and swallowed."""
         path = self._cache_path(key)
         if path is None:
             return

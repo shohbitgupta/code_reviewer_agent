@@ -120,6 +120,7 @@ class SymbolBoundaryResolver:
         self,
         pf: ParsedFile,
     ) -> Tuple[ParsedFile, Dict[str, int]]:
+        """Run all four boundary-resolution passes against one ParsedFile's symbols and return the rebuilt ParsedFile plus per-pass counts."""
         stats: Dict[str, int] = {"splits": 0, "macros": 0, "impls": 0}
 
         if not pf.symbols:

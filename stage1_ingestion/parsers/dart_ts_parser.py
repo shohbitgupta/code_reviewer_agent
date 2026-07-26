@@ -83,6 +83,14 @@ class DartTsParser(TreeSitterParser):
         source_bytes: bytes,
         raw_lines: List[str],
     ) -> List[ParsedSymbol]:
+        """
+        Extract grouped import/export/part/library directives, then walk the
+        CST for type and function/method declarations via _walk().
+
+        Returns:
+            List[ParsedSymbol] combining directive groups with class_head
+            and function/method symbols.
+        """
         symbols: List[ParsedSymbol] = []
         root = tree.root_node
 
@@ -132,6 +140,18 @@ class DartTsParser(TreeSitterParser):
         symbols: List[ParsedSymbol],
         current_type: Optional[str],
     ) -> None:
+        """
+        Recursively descend the CST, appending symbols to *symbols* in place.
+
+        Tracks *current_type* (the innermost enclosing class/mixin/extension/
+        enum name) so methods and constructors are emitted with the correct
+        parent_symbol; top-level `function_signature` nodes are only treated
+        as functions when no enclosing type is active. Since Dart's grammar
+        separates a declaration's signature from its body, uses
+        _find_next_body() to locate the following sibling body node and
+        extends end_line to cover it. Container nodes that don't match a
+        known declaration type are recursed into unconditionally.
+        """
         for child in node.children:
             ntype = child.type
 

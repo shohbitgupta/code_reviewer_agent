@@ -125,6 +125,17 @@ class KotlinParser(BaseParser):
         return "kotlin"
 
     def parse(self, source: str, raw_lines: List[str]) -> List[ParsedSymbol]:
+        """
+        Parse Kotlin source via regex heuristics into imports, types, and functions.
+
+        Args:
+            source:    Full file content as a single string.
+            raw_lines: Source split by newline (1-indexed when used with [i-1]).
+
+        Returns:
+            List[ParsedSymbol] — never raises; unmatched lines are simply
+            skipped by the regex patterns.
+        """
         symbols: List[ParsedSymbol] = []
         symbols.extend(self._imports(raw_lines))
         symbols.extend(self._types_and_funcs(raw_lines))
@@ -171,6 +182,28 @@ class KotlinParser(BaseParser):
     # ── Types and functions ───────────────────────────────────────────────────
 
     def _types_and_funcs(self, raw_lines: List[str]) -> List[ParsedSymbol]:
+        """
+        Single-pass line scan emitting class_head, method, and property symbols.
+
+        Maintains a stack of (type_name, closing_line) so nested types
+        (companion objects, inner classes) resolve the correct enclosing
+        parent_symbol, popping entries once their closing brace line has
+        passed. Pending @Annotation lines are accumulated and attached as
+        decorators to whichever declaration follows; a blank line clears the
+        accumulator since annotations don't carry across unrelated
+        declarations.
+
+        Recognises, in priority order per line: companion objects, class/
+        interface/object declarations (tagging @android_component when a
+        base class is in ANDROID_COMPONENT_BASES), fun declarations (tagging
+        @android_lifecycle / propagating @Composable), and class-level
+        val/var properties that have an explicit get/set accessor block
+        (plain `val x = 5` assignments are not emitted as symbols).
+
+        Returns:
+            List[ParsedSymbol] with symbol_type "class_head" or
+            "method"/"function".
+        """
         symbols: List[ParsedSymbol] = []
 
         # Stack of (type_name, closing_line) for nesting
