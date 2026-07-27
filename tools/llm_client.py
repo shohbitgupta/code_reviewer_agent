@@ -435,11 +435,15 @@ class LLMClientFactory:
 
         if model_type == "ANTHROPIC":
             import anthropic
-            raw = anthropic.Anthropic(api_key=api_key)
+            # max_retries=0: retry/backoff/rate-limiting is owned entirely by
+            # our own callers (LLMReviewer._call_with_retry, etc.) — an SDK-level
+            # retry underneath ours would silently multiply request volume
+            # against providers with a hard per-minute ceiling (e.g. GLM free tier).
+            raw = anthropic.Anthropic(api_key=api_key, max_retries=0)
             ns  = _AnthropicSyncMessages(raw, model_id)
         else:
             import openai
-            kw: Dict[str, Any] = {}
+            kw: Dict[str, Any] = {"max_retries": 0}
             if api_key:
                 kw["api_key"] = api_key
             if base_url:
@@ -464,11 +468,12 @@ class LLMClientFactory:
 
         if model_type == "ANTHROPIC":
             import anthropic
-            raw = anthropic.AsyncAnthropic(api_key=api_key)
+            # max_retries=0 — see the sync create() method for rationale.
+            raw = anthropic.AsyncAnthropic(api_key=api_key, max_retries=0)
             ns  = _AnthropicAsyncMessages(raw, model_id)
         else:
             import openai
-            kw: Dict[str, Any] = {}
+            kw: Dict[str, Any] = {"max_retries": 0}
             if api_key:
                 kw["api_key"] = api_key
             if base_url:

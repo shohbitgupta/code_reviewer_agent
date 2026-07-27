@@ -26,11 +26,11 @@ def process_order(order):
     _notify_customer(order)
 ```
 
-### GEN002 — No Magic Numbers
+### GEN002 — No Magic Numbers in Comparisons or Loop Bounds
 - **Severity**: LOW
 - **Language**: all
 - **Category**: style
-- Numeric literals (other than 0, 1, -1) must not appear inline. Extract to named constants or configuration values.
+- Numeric literals in a comparison or loop bound (not 0, 1, -1) must be named constants. Call-argument literals (sizes, durations, colors) are exempt — already self-documenting.
 - **Bad:**
 ```kotlin
 if (retryCount > 3) { ... }
@@ -39,6 +39,11 @@ if (retryCount > 3) { ... }
 ```kotlin
 const val MAX_RETRY_COUNT = 3
 if (retryCount > MAX_RETRY_COUNT) { ... }
+```
+- **Not a violation** (call-argument literals — the parameter/call already documents what the number means):
+```dart
+const SizedBox(height: 16, width: 8)
+Duration(milliseconds: 300)
 ```
 
 ### GEN003 — No TODO/FIXME in Committed Code

@@ -2,7 +2,9 @@
 ProjectSymbolTable — built from all ParsedFiles after Step 1f.
 
 Provides O(1) lookup by qualified name and O(k) lookup by unqualified name.
-The qualified name key is "file_path::symbol_name".
+The qualified name key is "file_path::symbol_name", or
+"file_path::parent_name.symbol_name" when the symbol has a parent class —
+see qualified_key() for why the parent must be included.
 """
 from __future__ import annotations
 
@@ -48,6 +50,33 @@ class ProjectSymbolTable:
         self._by_file: Dict[str, List[SymbolEntry]] = {}
 
     # ------------------------------------------------------------------
+    # Key construction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def qualified_key(file_path: str, parent_name: Optional[str], name: str) -> str:
+        """
+        Build the O(1) exact-lookup key for a symbol, qualified by its
+        parent class when one exists.
+
+        Without the parent, two different classes in the SAME file that
+        both define a method of the same name (e.g. two classes each with
+        a `to_json`) would collide on one key — the later-parsed one
+        silently overwrites the earlier in `_by_qualified`, so an
+        exact-qualified lookup resolves EVERY class's `to_json()` call to
+        whichever class happened to be parsed last, confidently (1.0) and
+        wrongly.
+
+        Guards against double-prefixing names that already embed their
+        parent (e.g. a Dart named constructor's `name` is already
+        "ClassName.ctorName" — do not turn that into
+        "ClassName.ClassName.ctorName").
+        """
+        if parent_name and not name.startswith(f"{parent_name}."):
+            return f"{file_path}::{parent_name}.{name}"
+        return f"{file_path}::{name}"
+
+    # ------------------------------------------------------------------
     # Building
     # ------------------------------------------------------------------
 
@@ -61,7 +90,7 @@ class ProjectSymbolTable:
         for pf in parsed_files:
             file_path = pf.file_meta.file_path
             for sym in pf.symbols:
-                qualified = f"{file_path}::{sym.name}"
+                qualified = self.qualified_key(file_path, sym.parent_name, sym.name)
                 entry = SymbolEntry(
                     name=sym.name,
                     qualified_name=qualified,
@@ -101,12 +130,12 @@ class ProjectSymbolTable:
         """
         Fill chunk_id on SymbolEntry objects after chunking completes.
 
-        Matching is by qualified name ("file_path::symbol_name").
-        A chunk's symbol_name may be a short name; we try the full qualified
-        key first, then fall back to "file_path::symbol_name" construction.
+        Matching is by qualified name (see qualified_key()), built the same
+        way build() built it — including chunk.parent_symbol so this still
+        finds the entry now that keys are parent-qualified.
         """
         for chunk in chunks:
-            qualified = f"{chunk.file_path}::{chunk.symbol_name}"
+            qualified = self.qualified_key(chunk.file_path, chunk.parent_symbol, chunk.symbol_name)
             entry = self._by_qualified.get(qualified)
             if entry is not None:
                 entry.chunk_id = chunk.chunk_id

@@ -20,22 +20,32 @@ from stage1_ingestion.symbol_table import ProjectSymbolTable, SymbolEntry
 BASE_CLASS_LAYERS: Dict[str, Set[str]] = {
     "presentation": {
         "StatefulWidget", "StatelessWidget", "ConsumerWidget", "HookWidget",
+        "State", "InheritedWidget",  # Flutter: State<T> companion + InheritedWidget/Provider context
         "Activity", "AppCompatActivity", "ComponentActivity", "FragmentActivity",
         "Fragment", "DialogFragment", "BottomSheetDialogFragment",
         "ViewController", "UIViewController", "UIView", "UITableViewController",
         "UICollectionViewController", "UITabBarController", "UINavigationController",
         "UITableViewCell", "UICollectionViewCell", "UIControl",
+        "Responder",                          # actix-web (Rust): converts to an HTTP response
+        "View", "APIView", "Blueprint", "APIRouter",  # Django/DRF/Flask/FastAPI (Python)
     },
     "domain": {
         "ViewModel", "AndroidViewModel", "StateNotifier", "ChangeNotifier",
         "Bloc", "Cubit", "GetxController",
         "Interactor", "UseCase", "NSObject",
+        "ObservableObject",  # SwiftUI's ChangeNotifier equivalent
     },
     "data": {
         "Repository", "DataSource", "Dao", "ApiService",
         "RoomDatabase", "ContentProvider",
         "Worker", "CoroutineWorker",
         "URLSession", "NSURLSession",
+        "ApiClient", "Dio",  # common Dart/Flutter HTTP clients
+        "Serialize", "Deserialize",  # serde (Rust)
+        "Model", "BaseModel",        # Django ORM / Pydantic (Python)
+    },
+    "infrastructure": {
+        "App",  # SwiftUI @main entry point — analogous to AppDelegate
     },
 }
 
@@ -48,12 +58,24 @@ PATH_LAYERS: Dict[str, Set[str]] = {
         "activities", "fragments", "viewcontrollers", "viewcontroller",
         "customviews", "customview", "cells", "tableviewcells",
         "collectionviewcells", "controllers", "storyboards", "xibs",
+        "presentation",  # feature-first Clean Architecture: features/<f>/presentation/
+        "routes", "router", "routing",       # the HTTP/nav entry layer — this is
+                                              # presentation work in both a backend
+                                              # framework (endpoint routing) and a
+                                              # mobile app (screen navigation), not
+                                              # a cross-cutting infra concern
+        "blueprints", "blueprint", "endpoints",  # Flask / FastAPI (Python)
+        "handlers", "handler",  # Rust web services (axum/actix-web/rocket) — an
+                                 # HTTP handler is the endpoint layer, same role
+                                 # as a Python view/endpoint or Kotlin controller
     },
     "domain": {
         "services", "service", "usecases", "usecase", "domain",
         "interactors", "interactor", "blocs", "bloc", "cubits", "cubit",
         "viewmodels", "viewmodel", "managers", "manager",
         "contactsmodule", "module", "modules", "features", "feature",
+        "providers", "provider",  # Provider package state management
+        "entities", "entity",     # Clean Architecture domain entities
     },
     "data": {
         "models", "model", "repositories", "repository",
@@ -61,6 +83,8 @@ PATH_LAYERS: Dict[str, Set[str]] = {
         "datasources", "datasource", "dao",
         "networkmanager", "networkservice", "networking",
         "networkservicemanager",
+        "data",  # feature-first Clean Architecture: features/<f>/data/
+        "schemas", "schema", "serializers", "serializer",  # DRF/Pydantic (Python)
     },
     "infrastructure": {
         "utils", "util", "helpers", "helper", "config", "configs",
@@ -68,6 +92,9 @@ PATH_LAYERS: Dict[str, Set[str]] = {
         "extensions", "extension",
         "utility", "utilities", "common", "shared", "base",
         "appdelegate", "scenedelegate", "resources", "assets",
+        "themes", "theme",  # Flutter theming
+        "core",             # feature-first shared root
+        "middleware",       # cross-cutting request pipeline concerns (Rust web services)
     },
 }
 
@@ -85,6 +112,7 @@ _IOS_SUFFIX_LAYERS: List[tuple] = [
     ("Control",                 "presentation"),
     ("Coordinator",             "presentation"),
     ("Router",                  "presentation"),
+    ("Screen",                  "presentation"),  # Jetpack Compose (Kotlin); benefits any PascalCase language
     # domain
     ("ViewModel",               "domain"),
     ("Presenter",               "domain"),
@@ -92,11 +120,13 @@ _IOS_SUFFIX_LAYERS: List[tuple] = [
     ("UseCase",                 "domain"),
     ("Manager",                 "domain"),
     ("Service",                 "domain"),
+    ("Protocol",                "domain"),  # Swift Clean Architecture: *Protocol names a domain-layer abstraction
     # data
     ("Repository",              "data"),
     ("DataSource",              "data"),
     ("APIClient",               "data"),
     ("NetworkManager",          "data"),
+    ("ApiService",              "data"),   # Retrofit (Kotlin) — more specific than the generic "Service" above
     ("Parser",                  "data"),
     ("Mapper",                  "data"),
     # infrastructure
@@ -108,6 +138,41 @@ _IOS_SUFFIX_LAYERS: List[tuple] = [
     ("Constants",               "infrastructure"),
     ("Config",                  "infrastructure"),
 ]
+# Matched longest-suffix-first (see _sorted_by_specificity) so a specific
+# suffix like "NetworkManager"/"ApiService" is never shadowed by a shorter,
+# more generic one ("Manager"/"Service") that happens to also match because
+# it's a trailing substring — declaration order alone doesn't guarantee this.
+_IOS_SUFFIX_LAYERS_SORTED = sorted(_IOS_SUFFIX_LAYERS, key=lambda t: -len(t[0]))
+
+# ── Dart/Flutter (snake_case) filename-suffix -> layer ────────────────────────
+# _IOS_SUFFIX_LAYERS is PascalCase-only ("Repository".endswith style) and never
+# fires on Dart's snake_case filenames (product_repository.dart). This is the
+# parallel table for that convention; longest/most-specific suffix first.
+
+_DART_SUFFIX_LAYERS: List[tuple] = [
+    # presentation
+    ("_page",             "presentation"),
+    ("_screen",            "presentation"),
+    ("_widget",            "presentation"),
+    ("_view",              "presentation"),
+    # domain
+    ("_bloc",              "domain"),
+    ("_cubit",             "domain"),
+    ("_notifier",          "domain"),
+    ("_provider",          "domain"),
+    ("_viewmodel",         "domain"),
+    ("_usecase",           "domain"),
+    ("_entity",            "domain"),
+    # data
+    ("_repository_impl",  "data"),
+    ("_repository",        "data"),
+    ("_service",           "data"),
+    ("_api",               "data"),
+    ("_client",            "data"),
+    ("_dto",               "data"),
+    ("_model",             "data"),
+]
+_DART_SUFFIX_LAYERS_SORTED = sorted(_DART_SUFFIX_LAYERS, key=lambda t: -len(t[0]))
 
 # Pre-compute the inverse mapping: base_class_name → layer (for fast lookup).
 _BASE_TO_LAYER: Dict[str, str] = {
@@ -197,6 +262,9 @@ class LayerClassifier:
         # Rule 3 — iOS filename suffix patterns (catches Manager, Service, etc.)
         matched.update(self._layers_from_ios_suffix(file_path))
 
+        # Rule 4 — Dart/Flutter snake_case filename suffix patterns
+        matched.update(self._layers_from_dart_suffix(file_path))
+
         if not matched:
             return ["unknown"]
 
@@ -260,15 +328,32 @@ class LayerClassifier:
         """
         Match iOS/macOS filename suffix conventions to architectural layers.
 
-        The stem (filename without extension) is checked against each suffix in
-        _IOS_SUFFIX_LAYERS in order.  Longest matching suffix wins per file.
+        The stem (filename without extension) is checked against each suffix
+        in _IOS_SUFFIX_LAYERS_SORTED, longest suffix first — so "NetworkManager"
+        matches its own (data) entry rather than being shadowed by the shorter
+        "Manager" (domain) suffix that it also happens to end with.
         """
         stem = file_path.replace("\\", "/").split("/")[-1].rsplit(".", 1)[0]
         matched: Set[str] = set()
-        for suffix, layer in _IOS_SUFFIX_LAYERS:
+        for suffix, layer in _IOS_SUFFIX_LAYERS_SORTED:
             if stem.endswith(suffix):
                 matched.add(layer)
-                break  # first (longest) match wins; list is ordered by specificity
+                break  # longest match wins
+        return matched
+
+    @staticmethod
+    def _layers_from_dart_suffix(file_path: str) -> Set[str]:
+        """
+        Match Dart/Flutter snake_case filename suffix conventions to layers
+        (e.g. "product_repository.dart" -> data). See _DART_SUFFIX_LAYERS.
+        Longest suffix first — same shadowing rationale as the iOS table.
+        """
+        stem = file_path.replace("\\", "/").split("/")[-1].rsplit(".", 1)[0].lower()
+        matched: Set[str] = set()
+        for suffix, layer in _DART_SUFFIX_LAYERS_SORTED:
+            if stem.endswith(suffix):
+                matched.add(layer)
+                break
         return matched
 
     # Keep old single-value helpers as thin wrappers for any remaining callers.

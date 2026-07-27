@@ -25,9 +25,16 @@ _WHERE_RE   = re.compile(r"^\s*where\s+(.*)")
 
 _TYPE_RE = re.compile(
     r"^(?:public\s+|private\s+|internal\s+|open\s+|fileprivate\s+)?"
-    r"(?:final\s+)?(?:class|struct|enum|protocol|actor)\s+(\w+)"
+    r"(?:final\s+)?(?:class|struct|enum|protocol|actor|extension)\s+(\w+)"
     r"(?:\s*:\s*([\w,\s]+))?"
 )
+
+# "class" doubles as both the type-declaration keyword AND a member modifier
+# ("class func foo()", "class var bar: Int" — Swift's equivalent of `static`).
+# _TYPE_RE can't tell these apart syntactically, so reject a match whose
+# captured "name" is actually one of these continuation keywords — no real
+# Swift type is ever named exactly "func"/"var"/"let".
+_TYPE_RE_FALSE_POSITIVES: Set[str] = {"func", "var", "let"}
 
 _FUNC_RE = re.compile(
     r"^(?:public\s+|private\s+|internal\s+|open\s+|fileprivate\s+)?"
@@ -44,23 +51,23 @@ _KEYWORDS: Set[str] = {
     "super", "self", "init",
 }
 
-# self.method( -- captures the method name
-_SELF_CALL_RE = re.compile(r"\bself\.([a-z_][a-zA-Z0-9_]*)\s*[<(]")
-# TypeName.method( -- captures the method name (first char lowercase)
-_TYPE_CALL_RE = re.compile(r"\b[A-Z][a-zA-Z0-9_]*\.([a-z_][a-zA-Z0-9_]*)\s*[<(]")
-# Standalone call: word( not preceded by . or another word char
-_BARE_CALL_RE = re.compile(r"(?<![.\w])([a-z_][a-zA-Z0-9_]+)\s*\(")
+# Any identifier immediately followed by "(" or "<" is a call site, regardless
+# of what precedes it — a receiver-specific scheme (self./TypeName./bare) missed
+# the majority of real Swift calls: lowercase-receiver dot-calls
+# ("manager.cache.store(id)") and optional chaining ("session?.invalidate()"),
+# since neither is "self.", an uppercase-led "TypeName.", nor unprefixed. `\b`
+# already marks the boundary correctly whether preceded by ".", "?.", "!", or
+# nothing, so one pattern covers all of them.
+_CALL_EXTRACT_RE = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*[<(]")
 
 
 def _extract_calls(body_lines: List[str]) -> List[str]:
     """
     Scan the body of a function for call sites and return unique callee names.
 
-    Recognises three patterns:
-      self.method(...)     -> "method"
-      TypeName.method(...) -> "method"
-      bareFunction(...)    -> "bareFunction"
-
+    Matches any `name(` or `name<...>(` regardless of receiver — covers
+    self.method(...), TypeName.method(...), instance.method(...),
+    optional-chained instance?.method(...), and bare calls alike.
     Filters out Swift keywords and single-letter names.
     """
     seen: Set[str] = set()
@@ -70,19 +77,9 @@ def _extract_calls(body_lines: List[str]) -> List[str]:
         if stripped.startswith("//") or stripped.startswith("*"):
             continue  # skip comments
 
-        for m in _SELF_CALL_RE.finditer(line):
+        for m in _CALL_EXTRACT_RE.finditer(line):
             name = m.group(1)
             if name not in _KEYWORDS and len(name) > 1:
-                seen.add(name)
-
-        for m in _TYPE_CALL_RE.finditer(line):
-            name = m.group(1)
-            if name not in _KEYWORDS and len(name) > 1:
-                seen.add(name)
-
-        for m in _BARE_CALL_RE.finditer(line):
-            name = m.group(1)
-            if name not in _KEYWORDS and len(name) > 2:
                 seen.add(name)
 
     return sorted(seen)
@@ -171,6 +168,8 @@ class SwiftParser(BaseParser):
 
             # ── Type declarations ─────────────────────────────────────────────
             m = _TYPE_RE.match(stripped)
+            if m and m.group(1) in _TYPE_RE_FALSE_POSITIVES:
+                m = None
             if m:
                 name  = m.group(1)
                 bases = [b.strip() for b in (m.group(2) or "").split(",") if b.strip()]

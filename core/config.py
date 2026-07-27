@@ -25,6 +25,11 @@ _MODEL_TYPE      = os.getenv("MODEL_TYPE",       "ANTHROPIC").upper().strip()
 _MODEL_NAME      = os.getenv("MODEL_NAME",       "").strip()
 _FAST_MODEL_NAME = os.getenv("FAST_MODEL_NAME",  "").strip()
 
+# Public re-export — callers that need to branch on provider (e.g. Stage 3's
+# client-side rate limiter for the GLM free tier) should use this rather than
+# re-parsing the MODEL_TYPE env var themselves.
+MODEL_TYPE = _MODEL_TYPE
+
 if _MODEL_TYPE == "FREE":
     REVIEW_MODEL  = _MODEL_NAME      or "z-ai/glm-5.2-free"
     SUMMARY_MODEL = _MODEL_NAME      or "z-ai/glm-5.2-free"

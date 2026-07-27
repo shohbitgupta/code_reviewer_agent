@@ -64,7 +64,7 @@ unsafe {
 - **Severity**: MEDIUM
 - **Language**: rust
 - **Category**: complexity
-- Cloning data structures to work around borrow-checker issues often signals a design problem. Prefer references, `Rc`/`Arc`, or restructuring ownership.
+- Cloning data structures to work around borrow-checker issues often signals a design problem. Prefer references, `Rc`/`Arc`, or restructuring ownership. Does not apply to `Rc::clone`/`Arc::clone` for shared ownership — that clone is a cheap refcount bump and is idiomatic.
 - **Bad:**
 ```rust
 let name = user.name.clone();
@@ -80,7 +80,7 @@ process(&user.name);
 - **Severity**: LOW
 - **Language**: rust
 - **Category**: style
-- Plain data structs should derive `Debug`, `Clone`, `PartialEq` (and `Eq` / `Hash` when appropriate). This is zero-cost and enables testing and debugging.
+- Plain data structs should derive `Debug`, `Clone`, `PartialEq` (and `Eq` / `Hash` when appropriate). This is zero-cost and enables testing and debugging. Does not apply to RAII guards, locks, or unique-ownership handles that are intentionally non-`Clone` (e.g. `MutexGuard`, file handles) — deriving `Clone` there would violate the type's own invariants.
 - **Bad:**
 ```rust
 struct Config {
@@ -101,7 +101,7 @@ struct Config {
 - **Severity**: HIGH
 - **Language**: rust
 - **Category**: error_handling
-- Library crates must never call `panic!`, `todo!`, `unimplemented!`, or `unreachable!` in paths reachable from the public API. Let callers decide how to handle errors.
+- Library crates must never call `panic!`, `todo!`, `unimplemented!`, or `unreachable!` in paths reachable from the public API. Let callers decide how to handle errors. Does not apply to binary crate entry points (`main.rs`, CLI tools), where panicking with a clear message is an acceptable way to abort with a non-zero exit code.
 - **Bad:**
 ```rust
 pub fn divide(a: i64, b: i64) -> i64 {

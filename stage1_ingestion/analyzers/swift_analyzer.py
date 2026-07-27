@@ -1,9 +1,12 @@
 """
 Swift language-specific enrichment pass (minimal).
 
-The regex-based Swift parser does not populate calls[], so enrichment
-focuses on what IS available: class_head symbol bases for protocol
-conformance detection and delegate pattern detection.
+The regex-based Swift parser (swift_parser.py) does populate calls[] via a
+broad identifier-before-"(" scan, but this pass predates that and still
+focuses on what class_head symbol bases provide: protocol conformance
+detection and delegate pattern detection. Extending it to reason about
+calls[] (the way DartAnalyzer does for widget-composition/BLoC patterns)
+is a reasonable follow-up, not yet done here.
 """
 from __future__ import annotations
 
@@ -87,7 +90,7 @@ class SwiftAnalyzer(LanguageAnalyzer):
                     continue
 
                 entry = symbol_table.lookup_by_qualified(
-                    f"{file_path}::{sym.name}"
+                    symbol_table.qualified_key(file_path, sym.parent_name, sym.name)
                 )
                 if entry is None:
                     continue

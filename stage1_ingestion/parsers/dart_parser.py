@@ -48,10 +48,10 @@ _IMPORT_RE = re.compile(r"^(?:import|export|part)\s+['\"]")
 _TYPE_RE = re.compile(
     r"^(?:(?:sealed|base|final|interface|abstract)\s+)*"  # Dart 3 + abstract
     r"(?:class|mixin|extension type|extension|enum)\s+"
-    r"(\w+)"                           # type name
+    r"([\w$]+)"                        # type name (codegen names may contain $)
     r"(?:<[^{]*?>)?"                   # optional generic params (non-greedy)
     r"(?:\s+(?:extends|implements|with|on)\s+"
-    r"([\w<>\s,?.]+?))??"              # optional base/interface clause
+    r"([\w$<>\s,?.]+?))??"             # optional base/interface clause
     r"\s*[{(]"                         # opening brace or paren
 )
 
@@ -61,17 +61,17 @@ _ANNOTATION_RE = re.compile(r"^@(\w+)")
 # factory / named / const constructors:
 #   factory ClassName.method(  |  ClassName.method(  |  const ClassName(
 _CONSTRUCTOR_RE = re.compile(
-    r"^(?:const\s+)?(?:factory\s+)?(\w+)(?:\.(\w+))?\s*\("
+    r"^(?:const\s+)?(?:factory\s+)?([\w$]+)(?:\.([\w$]+))?\s*\("
 )
 
 # Getter:  ReturnType get name => ...  or  ReturnType get name {
 _GETTER_RE = re.compile(
-    r"^(?:static\s+)?(?:[\w<>?,\s]+?)\s+get\s+(\w+)\s*(?:=>|\{|;)"
+    r"^(?:static\s+)?(?:[\w$<>?,\s]+?)\s+get\s+([\w$]+)\s*(?:=>|\{|;)"
 )
 
 # Setter:  set name(Type value)
 _SETTER_RE = re.compile(
-    r"^(?:static\s+)?set\s+(\w+)\s*\("
+    r"^(?:static\s+)?set\s+([\w$]+)\s*\("
 )
 
 # Regular method / function.
@@ -84,9 +84,9 @@ _FUNC_RE = re.compile(
     r"(?:Future(?:<[^>]*>)?|Stream(?:<[^>]*>)?|Iterable(?:<[^>]*>)?"
     r"|void|bool|int|double|num|String|dynamic|never|Object"
     r"|Widget(?:[?])?|List<[^>]+>|Map<[^,>]+,[^>]+>|Set<[^>]+>"
-    r"|[\w<>?]+(?:\s*<[^>]+>)?)"   # catch-all for custom types e.g. MyType<T>
+    r"|[\w$<>?]+(?:\s*<[^>]+>)?)"  # catch-all for custom types e.g. MyType<T>
     r"\s+"
-    r"(\w+)"                        # method / function name
+    r"([\w$]+)"                     # method / function name (codegen names may contain $)
     r"\s*(?:<[^>]*>)?\s*\("        # optional generic params + opening paren
 )
 
@@ -98,7 +98,7 @@ _CONTROL_FLOW = frozenset({
 
 # Regex for extracting all call sites from Dart source.
 # Matches: regular calls `name(`, cascade calls `..name(`, null-safe `?.name(`
-_CALL_EXTRACT_RE = re.compile(r'(?:(?:\.\.|(?:\?\.))\s*)?(\b\w+)\s*\(')
+_CALL_EXTRACT_RE = re.compile(r'(?:(?:\.\.|(?:\?\.))\s*)?(\b[\w$]+)\s*\(')
 
 # Names to skip when building the calls list (builtins, lifecycle, Dart core types)
 _DART_CALL_SKIP = frozenset({
@@ -300,6 +300,15 @@ class DartParser(BaseParser):
                 continue
 
             # ── Regular method / function ─────────────────────────────────────
+            # A control-flow keyword as the line's first token (e.g. "return
+            # Container(...)") must be rejected before attempting the regex —
+            # checking only the captured *name* group misses this, since the
+            # return-type alternation can itself match "return" as a type
+            # token, capturing the call that follows as the "function name".
+            if stripped.split(None, 1)[0] in _CONTROL_FLOW:
+                annotations = []
+                continue
+
             func_m = _FUNC_RE.match(stripped)
             if func_m:
                 name = func_m.group(1)

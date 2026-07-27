@@ -79,7 +79,7 @@ class RustAnalyzer(LanguageAnalyzer):
         for sym in pf.symbols:
             try:
                 entry = symbol_table.lookup_by_qualified(
-                    f"{file_path}::{sym.name}"
+                    symbol_table.qualified_key(file_path, sym.parent_name, sym.name)
                 )
 
                 # ── Pattern 1: Trait implementation mapping ───────────────

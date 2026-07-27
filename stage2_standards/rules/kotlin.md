@@ -96,6 +96,10 @@ sealed class UiState {
 - **Language**: kotlin
 - **Category**: style
 - New ViewModels should use `StateFlow`/`SharedFlow` (coroutine-native) over `LiveData` (lifecycle-library). `LiveData` is still acceptable in legacy code.
+- **Bad:**
+```kotlin
+private val state = MutableLiveData<UiState>()
+```
 - **Good:**
 ```kotlin
 private val _uiState = MutableStateFlow<UiState>(UiState.Loading)
@@ -106,7 +110,7 @@ val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 - **Severity**: MEDIUM
 - **Language**: kotlin
 - **Category**: style
-- String literals displayed in the UI must come from `strings.xml` resources, not hardcoded in Kotlin source. This is required for localisation.
+- String literals passed directly to `TextView.text`, `setText(...)`, `Toast.makeText(...)`, or a Composable `Text(...)` must come from `strings.xml`, not be hardcoded — required for localisation. Log messages, analytics event names, and exception text are not in scope.
 - **Bad:**
 ```kotlin
 textView.text = "Welcome back!"
@@ -120,7 +124,7 @@ textView.text = getString(R.string.welcome_back)
 - **Severity**: INFO
 - **Language**: kotlin
 - **Category**: style
-- Prefer extension functions over static utility classes. Extension functions are more idiomatic Kotlin and allow calling syntax that reads naturally.
+- Prefer an extension function over a static utility `object` that wraps a single, unrelated helper method — the anti-pattern is single-method wrapper objects, not utility objects in general. A cohesive `object` grouping several related operations is fine as-is.
 - **Bad:**
 ```kotlin
 object StringUtils {

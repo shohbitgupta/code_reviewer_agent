@@ -120,6 +120,12 @@ struct Point { let x: Double; let y: Double }
 - **Language**: swift
 - **Category**: style
 - Conform to protocols in separate `extension` blocks rather than in the primary type declaration. This improves readability and makes conformances easy to locate.
+- **Bad:**
+```swift
+class UserCell: UITableViewCell, Configurable {
+    func configure(with user: User) { ... } // conformance declared inline
+}
+```
 - **Good:**
 ```swift
 class UserCell: UITableViewCell { /* core class body */ }

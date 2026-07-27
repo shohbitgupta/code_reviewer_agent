@@ -113,7 +113,7 @@ logger.info("Processing order %s", order_id)
 - **Severity**: LOW
 - **Language**: python
 - **Category**: style
-- Use `@dataclass` or named tuples instead of bare dicts when a structure has a fixed schema. This enables type checking and IDE autocomplete.
+- Use `@dataclass` or named tuples instead of bare dicts for domain objects passed between multiple functions or modules. Does not apply to request/response payloads or `**kwargs` pass-through dicts — those legitimately stay as plain dicts.
 - **Bad:**
 ```python
 user = {"id": 1, "name": "Alice", "email": "alice@example.com"}

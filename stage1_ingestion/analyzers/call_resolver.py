@@ -90,7 +90,7 @@ class Resolver:
 
                 for callee_raw in sym.calls:
                     rc = self._resolve_single_call(
-                        callee_raw, caller_file, symbol_table
+                        callee_raw, caller_file, symbol_table, caller_parent=sym.parent_name,
                     )
                     resolved_list.append(rc)
                     if rc.is_external:
@@ -108,22 +108,30 @@ class Resolver:
         callee_raw: str,
         caller_file: str,
         symbol_table: ProjectSymbolTable,
+        caller_parent: Optional[str] = None,
     ) -> ResolvedCall:
         """
         Try the five-step resolution cascade for one callee name string.
         Returns a ResolvedCall (is_external=True if all steps fail).
+
+        Args:
+            caller_parent: The calling symbol's own parent class, if any.
+                Passed through so `self.foo()`/`this.foo()` calls prefer a
+                match on the CALLING class specifically over an arbitrary
+                same-named method belonging to a different class in the
+                same file (see ProjectSymbolTable.qualified_key's docstring).
         """
         callee = callee_raw.strip()
 
         # Step 1 & 2 & 3 with the raw name.
-        result = self._try_resolve(callee, caller_file, symbol_table)
+        result = self._try_resolve(callee, caller_file, symbol_table, caller_parent)
         if result is not None:
             return result
 
         # Step 4: strip common prefixes (self.foo → foo, cls.bar → bar, this.baz → baz)
         stripped = self._strip_receiver_prefix(callee)
         if stripped and stripped != callee:
-            result = self._try_resolve(stripped, caller_file, symbol_table)
+            result = self._try_resolve(stripped, caller_file, symbol_table, caller_parent)
             if result is not None:
                 return result
 
@@ -141,11 +149,21 @@ class Resolver:
         callee: str,
         caller_file: str,
         symbol_table: ProjectSymbolTable,
+        caller_parent: Optional[str] = None,
     ) -> Optional[ResolvedCall]:
         """
         Attempt steps 1, 2, 3 for *callee*.  Return ResolvedCall or None.
         """
         # Step 1: exact qualified match using caller_file as the namespace.
+        # Try the CALLER'S OWN class first — this is what makes `self.foo()`
+        # resolve to the calling class's `foo`, not some other class's `foo`
+        # that happens to live in the same file (see qualified_key's docstring).
+        if caller_parent:
+            same_class_qualified = symbol_table.qualified_key(caller_file, caller_parent, callee)
+            entry = symbol_table.lookup_by_qualified(same_class_qualified)
+            if entry is not None:
+                return _entry_to_resolved_call(callee, entry, confidence=1.0)
+
         qualified = f"{caller_file}::{callee}"
         entry = symbol_table.lookup_by_qualified(qualified)
         if entry is not None:
@@ -154,6 +172,16 @@ class Resolver:
         # Steps 2 & 3: name lookup, same-file preferred.
         candidates = symbol_table.lookup_by_name(callee, prefer_file=caller_file)
         if candidates:
+            # Among same-file candidates, prefer one on the caller's own
+            # class — same rationale as the qualified check above, for
+            # names the qualified lookup didn't already resolve (e.g. a
+            # module-level helper calling a free function of the same name
+            # as some class's method elsewhere in the file).
+            same_file = [c for c in candidates if c.file_path == caller_file]
+            if caller_parent and same_file:
+                same_class = [c for c in same_file if c.parent_name == caller_parent]
+                if same_class:
+                    return _entry_to_resolved_call(callee, same_class[0], confidence=1.0)
             best = candidates[0]  # first = same-file if available, then sorted
             conf = 1.0 if best.file_path == caller_file else 0.8
             return _entry_to_resolved_call(callee, best, confidence=conf)

@@ -12,10 +12,30 @@ Flutter-specific tagging:
   - @flutter_widget on class_head when base is in FLUTTER_WIDGET_BASES
   - @flutter_lifecycle on build/initState/dispose/etc.
 
-Grammar: tree-sitter-languages provides "dart" via get_language("dart").
-Falls back to [] (not an exception) when tree-sitter-languages is not installed.
+Grammar: the `tree-sitter-dart` PyPI package (see requirements.txt).
+Falls back to [] (not an exception) when the grammar package is not installed.
 
-Pattern: mirrors KotlinTsParser / SwiftTsParser.
+Node type reference (tree-sitter-dart grammar — verified against the
+installed grammar directly, since it differs from tree-sitter-kotlin/-rust
+in several load-bearing ways):
+  - Classes:     "class_definition" (NOT "class_declaration")
+  - Methods:     "method_signature" wraps ONE of "function_signature" /
+                 "getter_signature" / "setter_signature" / a factory
+                 constructor — the name field lives on that inner node, not
+                 on "method_signature" itself.
+  - Constructors (non-factory): a "declaration" node wraps
+                 "constructor_signature" (named/plain) or
+                 "constant_constructor_signature" (const). The class-name and
+                 dotted-variant-name identifiers are both tagged field="name",
+                 so both must be collected (not just the first match) to
+                 build "ClassName.namedVariant".
+  - Factory constructors: "method_signature" wraps
+                 "factory_constructor_signature", whose identifiers carry NO
+                 field name — the class name and (optional) variant name are
+                 the first and second bare "identifier" children, in order.
+  - Params:      "formal_parameter_list" → "formal_parameter" children; the
+                 parameter's own name is field="name", but its type has no
+                 field label — take the first type-shaped child instead.
 """
 
 import logging
@@ -55,10 +75,16 @@ _CALL_SKIP: Set[str] = {
 
 # Dart class-like node types
 _TYPE_NODE_TYPES = {
-    "class_declaration",
+    "class_definition",       # NOT "class_declaration" — see module docstring
     "mixin_declaration",
     "extension_declaration",
     "enum_declaration",
+}
+
+# formal_parameter's type token has no field label in this grammar — the
+# first child of one of these types is taken as the parameter's type.
+_PARAM_TYPE_NODE_TYPES = {
+    "type_identifier", "void_type", "nullable_type", "function_type",
 }
 
 
@@ -74,8 +100,9 @@ class DartTsParser(TreeSitterParser):
 
     @classmethod
     def _load_language(cls):
-        from tree_sitter_languages import get_language
-        return get_language("dart")
+        from tree_sitter import Language
+        import tree_sitter_dart
+        return Language(tree_sitter_dart.language())
 
     def _extract_symbols(
         self,
@@ -157,7 +184,12 @@ class DartTsParser(TreeSitterParser):
 
             # ── Type declarations ────────────────────────────────────────────
             if ntype in _TYPE_NODE_TYPES:
-                name_node = child.child_by_field_name("name")
+                # "mixin_declaration" is the one type node in this grammar
+                # whose name carries no field label — fall back to the first
+                # identifier child (right after the "mixin" keyword).
+                name_node = child.child_by_field_name("name") or next(
+                    (c for c in child.children if c.type == "identifier"), None
+                )
                 name = self._node_text(name_node, source_bytes) if name_node else "anonymous"
                 start, end = self._node_lines(child)
                 head_end = min(start + 4, end)
@@ -198,63 +230,197 @@ class DartTsParser(TreeSitterParser):
                         end_line    = end,
                         source      = sym_source,
                         parent_name = None,
-                        calls       = self._collect_calls(child, source_bytes, _CALL_SKIP),
+                        calls       = self._collect_dart_calls(body, source_bytes, _CALL_SKIP)
+                                      if body is not None else [],
                         param_types = param_types,
                         return_type = return_type,
                     ))
                 continue
 
-            # ── Method declarations (inside class/mixin) ─────────────────────
+            # ── Method / getter / setter / factory-constructor declarations ──
+            # "method_signature" is a thin wrapper — the actual name field
+            # lives on its one child, EXCEPT for factory constructors, whose
+            # identifiers carry no field label at all.
             if ntype == "method_signature" and current_type:
-                name_node = child.child_by_field_name("name")
-                if name_node:
-                    method_name = self._node_text(name_node, source_bytes)
+                inner = child.children[0] if child.children else None
+                if inner is None:
+                    continue
+
+                if inner.type == "factory_constructor_signature":
+                    idents = [c for c in inner.children if c.type == "identifier"]
+                    if not idents:
+                        continue
+                    ctor_name = self._node_text(idents[0], source_bytes)
+                    if len(idents) > 1:
+                        ctor_name += "." + self._node_text(idents[1], source_bytes)
                     start, end = self._node_lines(child)
                     body = self._find_next_body(node, child)
                     if body is not None:
                         _, end = self._node_lines(body)
-                    is_lifecycle = method_name in FLUTTER_LIFECYCLE
-                    sym_source = "\n".join(raw_lines[start - 1:end])
-                    param_types, return_type = self._extract_params(child, source_bytes)
                     symbols.append(ParsedSymbol(
                         symbol_type = "method",
-                        name        = method_name,
+                        name        = ctor_name,
                         start_line  = start,
                         end_line    = end,
-                        source      = sym_source,
+                        source      = "\n".join(raw_lines[start - 1:end]),
                         parent_name = current_type,
-                        decorators  = ["@flutter_lifecycle"] if is_lifecycle else [],
-                        calls       = self._collect_calls(child, source_bytes, _CALL_SKIP),
-                        param_types = param_types,
-                        return_type = return_type,
+                        calls       = self._collect_dart_calls(body, source_bytes, _CALL_SKIP)
+                                      if body is not None else [],
                     ))
-                continue
+                    continue
 
-            # ── Constructor declarations ─────────────────────────────────────
-            if ntype == "constructor_signature" and current_type:
-                name_node = child.child_by_field_name("name")
-                ctor_name = (
-                    self._node_text(name_node, source_bytes)
-                    if name_node else current_type
-                )
+                name_node = inner.child_by_field_name("name")
+                if name_node is None:
+                    continue
+                method_name = self._node_text(name_node, source_bytes)
                 start, end = self._node_lines(child)
                 body = self._find_next_body(node, child)
                 if body is not None:
                     _, end = self._node_lines(body)
+                is_lifecycle = method_name in FLUTTER_LIFECYCLE
+                sym_source = "\n".join(raw_lines[start - 1:end])
+                param_types, return_type = self._extract_params(inner, source_bytes)
                 symbols.append(ParsedSymbol(
                     symbol_type = "method",
-                    name        = ctor_name,
+                    name        = method_name,
                     start_line  = start,
                     end_line    = end,
-                    source      = "\n".join(raw_lines[start - 1:end]),
+                    source      = sym_source,
                     parent_name = current_type,
+                    decorators  = ["@flutter_lifecycle"] if is_lifecycle else [],
+                    calls       = self._collect_dart_calls(body, source_bytes, _CALL_SKIP)
+                                  if body is not None else [],
+                    param_types = param_types,
+                    return_type = return_type,
                 ))
                 continue
+
+            # ── Non-factory constructor declarations ─────────────────────────
+            # These sit inside a generic "declaration" member wrapper shared
+            # with plain field declarations — only act when the wrapped node
+            # is actually a constructor signature.
+            if ntype == "declaration" and current_type:
+                inner = child.children[0] if child.children else None
+                if inner is not None and inner.type in (
+                    "constructor_signature", "constant_constructor_signature",
+                ):
+                    # Both the class name and a named-constructor variant are
+                    # tagged field="name" — collect every identifier match, in
+                    # source order. The "." separator is ALSO tagged
+                    # field="name" in this grammar, so it must be excluded
+                    # explicitly rather than trusting the field label alone.
+                    name_nodes = [
+                        inner.child(i) for i in range(inner.child_count)
+                        if inner.field_name_for_child(i) == "name"
+                        and inner.child(i).type == "identifier"
+                    ]
+                    ctor_name = (
+                        ".".join(self._node_text(n, source_bytes) for n in name_nodes)
+                        if name_nodes else current_type
+                    )
+                    start, end = self._node_lines(child)
+                    body = self._find_next_body(node, child)
+                    if body is not None:
+                        _, end = self._node_lines(body)
+                    symbols.append(ParsedSymbol(
+                        symbol_type = "method",
+                        name        = ctor_name,
+                        start_line  = start,
+                        end_line    = end,
+                        source      = "\n".join(raw_lines[start - 1:end]),
+                        parent_name = current_type,
+                        calls       = self._collect_dart_calls(body, source_bytes, _CALL_SKIP)
+                                      if body is not None else [],
+                    ))
+                continue   # plain field declarations don't nest further symbols
 
             # Recurse into other containers
             self._walk(child, source_bytes, raw_lines, symbols, current_type)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _collect_dart_calls(self, node, source_bytes: bytes, skip_set: Set[str]) -> List[str]:
+        """
+        Dart-specific call-site collection.
+
+        This grammar has no unified "call_expression" node (unlike Kotlin's/
+        Rust's, which TreeSitterParser._collect_calls targets) — a call is a
+        flat run of siblings: a base identifier, zero or more `.member`
+        selectors (each wrapping "unconditional_assignable_selector"), an
+        optional bare `<TypeArgs>` selector for a generic call, and a final
+        selector wrapping "argument_part" (the parens). Cascades (`..foo()`)
+        use a distinct "cascade_section"/"cascade_selector" shape instead.
+
+        For a single-hop `Base.method(...)` where Base looks like a type name
+        (starts uppercase — the common named/factory-constructor and static-
+        call shape, e.g. `UserModel.fromJson(...)`), records BOTH "method"
+        and "Base.method" so the resolver can match either the bare name or
+        the qualified constructor/method symbol name.
+
+        Known gap: `Foo.bar<T>(x)` (a generic static call, e.g.
+        `Provider.of<AuthProvider>(context)`) is genuinely ambiguous in this
+        grammar without semantic analysis and gets misparsed as a relational
+        expression (`<`/`>` as comparison operators) — "bar" is not
+        recovered in that specific shape. Chained calls after it still are.
+        """
+        seen: set = set()
+        result: List[str] = []
+
+        def _add(name: str) -> None:
+            name = name.strip()
+            if name and name not in skip_set and name not in seen:
+                seen.add(name)
+                result.append(name)
+
+        def _is_call_selector(sel) -> bool:
+            return any(c.type == "argument_part" for c in sel.children)
+
+        def _member_name(sel) -> Optional[str]:
+            inner = next(
+                (c for c in sel.children if c.type == "unconditional_assignable_selector"),
+                None,
+            )
+            if inner is None:
+                return None
+            ident = next((c for c in inner.children if c.type == "identifier"), None)
+            return self._node_text(ident, source_bytes) if ident is not None else None
+
+        def _walk(n) -> None:
+            children = n.children
+            for i, child in enumerate(children):
+                nxt = children[i + 1] if i + 1 < len(children) else None
+
+                # Base identifier called directly, no ".member" in between —
+                # e.g. simpleCall(), CheckoutEvent().
+                if child.type in ("identifier", "type_identifier"):
+                    if nxt is not None and nxt.type == "selector" and _is_call_selector(nxt):
+                        _add(self._node_text(child, source_bytes))
+
+                # ".member" selector immediately followed by a call selector
+                # (possibly a generic-args call like ".read<T>()").
+                elif child.type == "selector":
+                    member = _member_name(child)
+                    if member is not None and nxt is not None and nxt.type == "selector" \
+                            and _is_call_selector(nxt):
+                        _add(member)
+                        prev = children[i - 1] if i > 0 else None
+                        if prev is not None and prev.type in ("identifier", "type_identifier"):
+                            base_name = self._node_text(prev, source_bytes)
+                            if base_name[:1].isupper():
+                                _add(f"{base_name}.{member}")
+
+                # Cascade notation: `..method(...)`.
+                elif child.type == "cascade_section":
+                    csel = next((c for c in child.children if c.type == "cascade_selector"), None)
+                    if csel is not None:
+                        ident = next((c for c in csel.children if c.type == "identifier"), None)
+                        if ident is not None:
+                            _add(self._node_text(ident, source_bytes))
+
+                _walk(child)
+
+        _walk(node)
+        return result
 
     def _collect_bases(self, node, source_bytes: bytes) -> List[str]:
         """Extract base class / interface names from a type declaration."""
@@ -287,20 +453,35 @@ class DartTsParser(TreeSitterParser):
         return None
 
     def _extract_params(self, node, source_bytes: bytes):
-        """Return (param_types, return_type) for a function/method signature node."""
+        """
+        Return (param_types, return_type) for a function/getter/setter
+        signature node (e.g. the node wrapped by "method_signature").
+
+        Neither a parameter's type nor a signature's return type carries a
+        field label in this grammar — a parameter's type is its first
+        type-shaped child (see _PARAM_TYPE_NODE_TYPES), and the return type,
+        when present, is the signature node's own first child appearing
+        before the (field-labelled) name.
+        """
         param_types: List[str] = []
         return_type: Optional[str] = None
 
+        if node.children and node.children[0].type in _PARAM_TYPE_NODE_TYPES:
+            return_type = self._node_text(node.children[0], source_bytes).strip()
+
         for child in node.children:
-            if child.type == "formal_parameter_list":
-                for param in child.children:
-                    if param.type in ("normal_formal_parameter", "optional_formal_parameter"):
-                        type_node = param.child_by_field_name("type")
-                        if type_node:
-                            param_types.append(
-                                self._node_text(type_node, source_bytes).strip()
-                            )
-            elif child.type == "type_annotation":
-                return_type = self._node_text(child, source_bytes).strip()
+            if child.type != "formal_parameter_list":
+                continue
+            for param in child.children:
+                if param.type not in (
+                    "formal_parameter", "normal_formal_parameter", "optional_formal_parameter",
+                ):
+                    continue
+                type_node = next(
+                    (c for c in param.children if c.type in _PARAM_TYPE_NODE_TYPES),
+                    None,
+                )
+                if type_node is not None:
+                    param_types.append(self._node_text(type_node, source_bytes).strip())
 
         return param_types, return_type

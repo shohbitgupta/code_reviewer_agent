@@ -77,6 +77,14 @@ BLAST_RADIUS_THRESHOLD  = 50   # chunks with ≥ this many dep edges get a note,
 _WORKER_THREADS         = 3    # GLM free tier: keep low to avoid throttling
 _REVIEW_CACHE_DIR       = Path("./workspace/review_cache")
 
+# GLM free tier enforces 50 requests/min ACROSS THE WHOLE ACCOUNT, counting
+# failed attempts — a low _WORKER_THREADS alone doesn't stop 3 threads from
+# sustaining more than 50 req/min between them. Leave headroom below the
+# documented ceiling so our own retries can't tip it back over. Paid
+# providers (OpenAI/Anthropic) have much higher, differently-shaped limits
+# and are left unthrottled (None).
+_FREE_TIER_REQUESTS_PER_MINUTE = 45
+
 # ── O1: Security-sensitive path patterns → always use full model ──────────────
 _SECURITY_PATHS = frozenset({
     "auth", "crypt", "token", "password", "secret", "jwt",
@@ -158,9 +166,12 @@ def run_review(
     ctx_builder  = ContextBuilder(chunk_map, dep_graph, qdrant_tool, bm25_index)
     prompt_builder = PromptBuilder()
     reviewer     = LLMReviewer(
-        llm_client    = llm_client,
-        max_concurrency = _WORKER_THREADS,
-        cache_dir     = _REVIEW_CACHE_DIR,
+        llm_client       = llm_client,
+        max_concurrency  = _WORKER_THREADS,
+        cache_dir        = _REVIEW_CACHE_DIR,
+        requests_per_minute = (
+            _FREE_TIER_REQUESTS_PER_MINUTE if config.MODEL_TYPE == "FREE" else None
+        ),
     )
 
     # ── 4. Select and prioritise chunks for review ────────────────────────────

@@ -387,8 +387,16 @@ class RustTsParser(TreeSitterParser):
                     raw  = cls._node_text(callee_node, source_bytes).strip()
                     name = raw.split(".")[-1].strip()
                     if "<" in name:
+                        # Strip turbofish generics: "sum::<i32>" -> "sum::" —
+                        # truncating alone leaves a trailing "::" that must
+                        # also be stripped below, not left in the name.
                         name = name[:name.index("<")]
-                    name = name.strip()
+                    name = name.rstrip(":").strip()
+                    # Unwrap namespace qualification: "Rectangle::new" -> "new",
+                    # "Self::default" -> "default". This is Rust's dominant
+                    # constructor/associated-function idiom — without this,
+                    # every `Type::method()` call fails to resolve project-wide.
+                    name = name.split("::")[-1].strip()
                     if name and name not in skip_set and name not in seen:
                         seen.append(name)
                         result.append(name)

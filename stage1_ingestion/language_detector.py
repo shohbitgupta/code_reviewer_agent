@@ -73,6 +73,8 @@ VENDOR_PATH_SEGMENTS = {
 GENERATED_FILENAME_SUFFIXES = (
     "_pb2.py", "_pb.go", ".generated.ts", ".auto.ts",
     ".generated.js", "_generated.go",
+    # Dart/Flutter codegen: json_serializable, freezed, auto_route, build_runner
+    ".g.dart", ".freezed.dart", ".gr.dart", ".config.dart",
 )
 
 GENERATED_HEADER_MARKERS = (
@@ -80,6 +82,7 @@ GENERATED_HEADER_MARKERS = (
     "Code generated",
     "This file is auto-generated",
     "AUTO-GENERATED",
+    "GENERATED CODE - DO NOT MODIFY BY HAND",  # Dart build_runner header
 )
 
 # Test file name patterns and directory names

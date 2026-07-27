@@ -158,3 +158,61 @@ return Column(children: [
     SimpleText(label),
 ]);
 ```
+
+### DA008 — No BuildContext Use After an Async Gap Without a mounted Check
+- **Severity**: HIGH
+- **Language**: dart
+- **Category**: error_handling
+- After an `await`, the widget may have been disposed (user navigated away) before execution resumes. Using `context`, calling `setState()`, or reading `Theme.of(context)`/`Navigator.of(context)` after an `await` without first checking `mounted` risks a thrown exception or a rebuild on a defunct widget.
+- **Bad:**
+```dart
+Future<void> _submit() async {
+    await api.postOrder(order);
+    Navigator.of(context).pop(); // context may belong to a disposed widget
+}
+```
+- **Good:**
+```dart
+Future<void> _submit() async {
+    await api.postOrder(order);
+    if (!mounted) return;
+    Navigator.of(context).pop();
+}
+```
+
+### DA009 — Provide Keys for Widgets Built From a Dynamic List
+- **Severity**: MEDIUM
+- **Language**: dart
+- **Category**: error_handling
+- Widgets generated from a `List.map`, `List.generate`, or a builder callback (`ListView.builder`, `Column(children: ...)`) must carry a stable `key` when the underlying list can reorder, insert, or remove items. Without a key, Flutter matches widgets by position, mixing up controller/animation/focus state when the list changes.
+- **Bad:**
+```dart
+Column(
+  children: items.map((item) => ItemTile(item: item)).toList(),
+)
+```
+- **Good:**
+```dart
+Column(
+  children: items.map((item) => ItemTile(key: ValueKey(item.id), item: item)).toList(),
+)
+```
+
+### DA010 — Use Lazy Builders for Large or Unbounded Lists
+- **Severity**: MEDIUM
+- **Language**: dart
+- **Category**: complexity
+- A list of unknown or unbounded size must be rendered with `ListView.builder`/`GridView.builder` (which build items lazily, on demand) rather than eagerly materialising every child up front via `.map(...).toList()` inside a non-lazy `ListView`/`Column`. Eager construction builds and lays out every off-screen item immediately, which does not scale.
+- **Bad:**
+```dart
+ListView(
+  children: products.map((p) => ProductCard(product: p)).toList(),
+)
+```
+- **Good:**
+```dart
+ListView.builder(
+  itemCount: products.length,
+  itemBuilder: (context, i) => ProductCard(product: products[i]),
+)
+```
