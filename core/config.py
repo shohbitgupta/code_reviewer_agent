@@ -6,10 +6,15 @@ Override any value via environment variables where noted.
 Model selection is driven by MODEL_TYPE:
   FREE       → z-ai/glm-5.2-free  (ZhipuAI, OpenAI-compat, free tier)
   OPENAI     → gpt-4o             (OpenAI)
-  ANTHROPIC  → claude-opus-4-8    (default)
+  ANTHROPIC  → claude-opus-4-8
+  LITELLM    → configs/model_config.json's "reviewer" entry, via an
+               OpenAI-SDK-compatible LiteLLM gateway (custom base_url,
+               OPENAI_API_KEY for auth) — see tools/llm_client.py's
+               LLMClientFactory._resolve(). (default, or unset)
 
 Override the exact model IDs with MODEL_NAME (review) / FAST_MODEL_NAME (fast tier).
 """
+import json
 import os
 from pathlib import Path
 
@@ -20,8 +25,19 @@ try:
 except ImportError:
     pass
 
+# ── Role-based model config (configs/model_config.json) ─────────────────────
+# Read once at import time. Independent of MODEL_TYPE — the "judge" role
+# (tests/eval/judge.py's Tier 3) always comes from here regardless of which
+# MODEL_TYPE the main pipeline run is using, since it must be able to use a
+# different, independent model than the one under test.
+_MODEL_CONFIG_PATH = Path(__file__).parent.parent / "configs" / "model_config.json"
+try:
+    MODEL_CONFIG = json.loads(_MODEL_CONFIG_PATH.read_text())
+except (OSError, json.JSONDecodeError):
+    MODEL_CONFIG = {}
+
 # ── LLM Models ────────────────────────────────────────────────────────────────
-_MODEL_TYPE      = os.getenv("MODEL_TYPE",       "ANTHROPIC").upper().strip()
+_MODEL_TYPE      = os.getenv("MODEL_TYPE",       "LITELLM").upper().strip()
 _MODEL_NAME      = os.getenv("MODEL_NAME",       "").strip()
 _FAST_MODEL_NAME = os.getenv("FAST_MODEL_NAME",  "").strip()
 
@@ -38,10 +54,18 @@ elif _MODEL_TYPE == "OPENAI":
     REVIEW_MODEL  = _MODEL_NAME      or "gpt-4o"
     SUMMARY_MODEL = _MODEL_NAME      or "gpt-4o"
     FAST_MODEL    = _FAST_MODEL_NAME or "gpt-4o-mini"
+elif _MODEL_TYPE == "LITELLM":
+    _reviewer_cfg = MODEL_CONFIG.get("reviewer", {})
+    REVIEW_MODEL  = _MODEL_NAME      or _reviewer_cfg.get("model", "gpt-4o")
+    SUMMARY_MODEL = _MODEL_NAME      or _reviewer_cfg.get("model", "gpt-4o")
+    FAST_MODEL    = _FAST_MODEL_NAME or _reviewer_cfg.get("model", "gpt-4o")
 else:  # ANTHROPIC (default)
     REVIEW_MODEL  = _MODEL_NAME      or "claude-opus-4-8"
     SUMMARY_MODEL = _MODEL_NAME      or "claude-haiku-4-5-20251001"
     FAST_MODEL    = _FAST_MODEL_NAME or "claude-haiku-4-5-20251001"
+
+# Independent judge model (tests/eval/judge.py's Tier 3) — see MODEL_CONFIG above.
+JUDGE_MODEL = MODEL_CONFIG.get("judge", {}).get("model", "")
 
 # ── Embeddings ────────────────────────────────────────────────────────────────
 # Backend: "voyage" (default, best for code) or "openai"
@@ -65,3 +89,9 @@ MAX_REVIEW_CHUNKS  = int(os.getenv("MAX_REVIEW_CHUNKS", "300"))
 
 # ── Workspace ─────────────────────────────────────────────────────────────────
 WORKSPACE_ROOT = "./workspace"
+
+# ── Budget guard ──────────────────────────────────────────────────────────────
+# Hard USD ceilings enforced by tools/budget_guard.py before each LLM call.
+# Set to 0 to disable the corresponding cap entirely.
+MAX_REVIEW_COST_USD = float(os.getenv("MAX_REVIEW_COST_USD", "0"))   # per-run cap
+DAILY_BUDGET_USD    = float(os.getenv("DAILY_BUDGET_USD", "0"))      # rolling 24h cap, all runs combined

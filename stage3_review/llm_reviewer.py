@@ -79,6 +79,26 @@ REPORT_ISSUES_TOOL: Dict[str, Any] = {
                             "maximum": 1.0,
                         },
                         "category": {"type": "string"},
+                        "chunk_index": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": (
+                                "Only set in a bundle call reviewing multiple chunks at "
+                                "once: the 0-based CHUNK NUMBER this finding belongs to. "
+                                "Omit entirely for a single-chunk call."
+                            ),
+                        },
+                        "evidence": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Symbol or dependency names this finding relies on that "
+                                "were shown in the provided context (e.g. a callee's name, "
+                                "a similar-pattern chunk's symbol, an architectural-issue "
+                                "reference). Omit or leave empty for self-contained findings "
+                                "that don't depend on anything outside the reviewed code."
+                            ),
+                        },
                     },
                 },
             }
@@ -172,6 +192,7 @@ class LLMReviewer:
         chunk:         CodeChunk,
         rule_ids:      List[str],
         model:         str = "",
+        role:          str = "general",
     ) -> tuple:
         """
         Review one chunk.  Returns (raw_issue_dicts, was_cached).
@@ -179,12 +200,18 @@ class LLMReviewer:
         Args:
             model: Override the instance model for this call (O1 tiering).
                    Empty string = use the instance default (self._model).
+            role:  Reviewing specialist role (e.g. "security", "architecture").
+                   Folded into the cache key so different specialists reviewing
+                   the same chunk don't collide on — or reuse — each other's
+                   cached results. Defaults to "general" (today's single-role
+                   reviewer); only becomes meaningful once more than one role
+                   calls review() on the same chunk.
 
         Thread-safe: multiple WorkerPool threads can call this concurrently.
         The semaphore limits actual API concurrency; the cache is lock-guarded.
         """
         effective_model = model or self._model
-        cache_key = self._make_cache_key(chunk, rule_ids, effective_model)
+        cache_key = self._make_cache_key(chunk, rule_ids, effective_model, role)
 
         cached = self._load_cache(cache_key)
         if cached is not None:
@@ -195,10 +222,42 @@ class LLMReviewer:
             return cached, True
 
         with self._semaphore:
-            raw = self._call_with_retry(system_prompt, user_prompt, chunk, effective_model)
+            raw = self._call_with_retry(
+                system_prompt, user_prompt, f"{chunk.file_path}:{chunk.symbol_name}", effective_model
+            )
 
         self._save_cache(cache_key, raw)
         return raw, False
+
+    def review_bundle(
+        self,
+        system_prompt: str,
+        user_prompt:   str,
+        label:         str,
+        model:         str = "",
+    ) -> List[Dict]:
+        """
+        Review a bundle of several chunks in one call (see stage3_review/bundler.py).
+
+        Deliberately NOT cached across runs — bundling's benefit is fewer calls
+        *this run*; a bundle-aware cache key (hashing every member's content) is
+        a clean but separate follow-up once the mechanism itself is proven. Still
+        goes through the same semaphore/rate-limiter/retry path as review(), so
+        bundle calls count correctly against the shared per-minute ceiling.
+
+        Args:
+            label: Human-readable identifier for logging (e.g.
+                   "app/utils.py (bundle of 4)") — bundles don't have a single
+                   chunk to log against.
+
+        Returns:
+            Raw issue dicts; each is expected to carry a chunk_index field
+            (see REPORT_ISSUES_TOOL) so the caller can attribute it back to
+            the right bundle member.
+        """
+        effective_model = model or self._model
+        with self._semaphore:
+            return self._call_with_retry(system_prompt, user_prompt, label, effective_model)
 
     # ── Private: API call + retry ─────────────────────────────────────────────
 
@@ -206,7 +265,7 @@ class LLMReviewer:
         self,
         system_prompt: str,
         user_prompt:   str,
-        chunk:         CodeChunk,
+        label:         str,
         model:         str = "",
     ) -> List[Dict]:
         """Exponential-backoff retry for transient API errors."""
@@ -223,26 +282,26 @@ class LLMReviewer:
                 # Non-retryable: validation errors or auth failures
                 if status in (400, 401, 403):
                     logger.error(
-                        "[LLMReviewer] Non-retryable error %s for %s:%s — %s",
-                        status, chunk.file_path, chunk.symbol_name, exc,
+                        "[LLMReviewer] Non-retryable error %s for %s — %s",
+                        status, label, exc,
                     )
                     raise
 
                 # Retryable: rate limit or server error
                 wait = self._retry_delay(exc, status, backoff)
                 logger.warning(
-                    "[LLMReviewer] Attempt %d/%d failed for %s:%s (status=%s): %s "
+                    "[LLMReviewer] Attempt %d/%d failed for %s (status=%s): %s "
                     "— waiting %.1fs before retry",
                     attempt, _MAX_RETRIES,
-                    chunk.file_path, chunk.symbol_name, status, exc, wait,
+                    label, status, exc, wait,
                 )
                 if attempt < _MAX_RETRIES:
                     time.sleep(wait)
                     backoff *= 2
 
         logger.error(
-            "[LLMReviewer] All %d attempts exhausted for %s:%s",
-            _MAX_RETRIES, chunk.file_path, chunk.symbol_name,
+            "[LLMReviewer] All %d attempts exhausted for %s",
+            _MAX_RETRIES, label,
         )
         raise last_exc  # type: ignore[misc]
 
@@ -298,20 +357,22 @@ class LLMReviewer:
     # ── Private: content-hash cache ───────────────────────────────────────────
 
     @staticmethod
-    def _make_cache_key(chunk: CodeChunk, rule_ids: List[str], model: str = "") -> str:
+    def _make_cache_key(chunk: CodeChunk, rule_ids: List[str], model: str = "", role: str = "general") -> str:
         """
-        Stable cache key = md5(chunk content) + md5(sorted rule_ids) + model tag.
+        Stable cache key = md5(chunk content) + md5(sorted rule_ids) + model tag + role.
 
         Content-based: if the source changes, the key changes.
         Rules-based:   if standards are updated, old entries are bypassed.
         Model-based:   fast vs full model results are stored separately (O1).
+        Role-based:    different specialists reviewing the same chunk get
+                       distinct cache entries rather than colliding.
         """
         content_hash = hashlib.md5(chunk.content.encode()).hexdigest()
         rules_hash   = hashlib.md5(
             ",".join(sorted(rule_ids)).encode()
         ).hexdigest()[:8]
         model_tag    = model.split("/")[-1][:12] if model else ""
-        return f"{content_hash}_{rules_hash}_{model_tag}"
+        return f"{content_hash}_{rules_hash}_{model_tag}_{role}"
 
     def _cache_path(self, key: str) -> Optional[Path]:
         """Return the pickle path for *key*, or None if caching is disabled."""

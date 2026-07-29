@@ -25,6 +25,7 @@ from stage1_ingestion.file_filter import FileFilter
 from stage1_ingestion.file_parser import FileParser
 from stage1_ingestion.graph_builder import DependencyGraph
 from stage1_ingestion.language_detector import LanguageDetector
+from core import config
 from core.models import ChunkType, CodeChunk, FileMeta, QualityMetrics, WorkspaceLayout
 from stage1_ingestion.repo_scanner import RepoScanner
 from stage1_ingestion.summary_generator import SummaryGenerator
@@ -177,20 +178,12 @@ class IngestionPipeline:
         _s = time.monotonic()
         parser = FileParser()
 
-        # Priority 1: invalidate parse cache for changed files so they are
-        # re-parsed from disk rather than served from a stale cached result.
-        if _changed_files and layout.parsed_dir.exists():
-            import hashlib
-            for fm in file_metas:
-                if fm.file_path in _changed_files:
-                    digest = hashlib.md5(fm.absolute_path.encode()).hexdigest()[:16]
-                    cache_file = layout.parsed_dir / f"{digest}.json"
-                    if cache_file.exists():
-                        cache_file.unlink()
-                        logger.debug("[Pipeline] Invalidated parse cache for %s", fm.file_path)
-
+        # Repo-scoped (not run-scoped) so re-parsing the same repo across separate
+        # CLI invocations actually reuses cached results — file_parser.py's own
+        # content-hash check (not a git diff) is what keeps this safe to persist.
+        parse_cache_dir = Path(config.WORKSPACE_ROOT) / "parse_cache" / repo_name
         parsed_files = parser.parse_many(
-            file_metas, cache_dir=layout.parsed_dir, max_workers=max_workers
+            file_metas, cache_dir=parse_cache_dir, max_workers=max_workers
         )
         _t("1f_parse", _s)
 
@@ -286,6 +279,7 @@ class IngestionPipeline:
             generator = SummaryGenerator(
                 embed_tool = embed_tool,
                 llm_client = llm_client,
+                cache_dir  = Path(config.WORKSPACE_ROOT) / "summary_cache",
             )
             chunks = generator.run(chunks)
         else:

@@ -1,0 +1,11 @@
+{
+  "description": "False-positive trap: the comparison is against a well-named module-level constant, not a bare literal — GEN002 must not fire, mirroring rule_checker.py's own mechanical discipline (magic numbers only matter when the threshold's meaning has to be re-derived from a bare literal).",
+  "language": "python",
+  "chunk_type": "block",
+  "layer": "unknown",
+  "must_find": [],
+  "must_not_find": [
+    {"rule_id": "GEN002"}
+  ],
+  "expected_evidence_terms": []
+}

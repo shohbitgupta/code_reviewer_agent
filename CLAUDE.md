@@ -25,7 +25,7 @@ All stages share a single `ReviewState` TypedDict defined in `orchestration/stat
 
 ```
 core/
-  config.py          — MODEL_TYPE routing (FREE / OPENAI / ANTHROPIC), env var refs
+  config.py          — MODEL_TYPE routing (FREE / OPENAI / ANTHROPIC / LITELLM), env var refs
   models.py          — ALL shared dataclasses (CodeChunk, RuleViolation, ParsedFile, …)
 
 orchestration/
@@ -85,6 +85,8 @@ tools/
 
 configs/
   code_file_type_config.py — extension→language map used by the file filter
+  model_config.json        — "reviewer"/"judge" role model configs for the
+                             LITELLM MODEL_TYPE and LLMClientFactory.create_for_role()
 
 skills/              — living design docs; read the relevant SKILL file before
                        modifying a stage (e.g. skills/ingestion/SKILL_chunking.md)
@@ -95,7 +97,7 @@ skills/              — living design docs; read the relevant SKILL file before
 ## Running
 
 ```bash
-# Full review (requires Qdrant running, MODEL_TYPE=FREE by default)
+# Full review (requires Qdrant running, MODEL_TYPE=LITELLM by default)
 python main.py https://github.com/owner/repo --review
 
 # Skip LLM summaries (faster first run)
@@ -119,11 +121,13 @@ pytest tests/test_pipeline_stages.py -s -v
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `MODEL_TYPE` | `FREE` (GLM), `OPENAI`, or `ANTHROPIC` | `FREE` |
+| `MODEL_TYPE` | `FREE` (GLM), `OPENAI`, `ANTHROPIC`, or `LITELLM` | `LITELLM` |
 | `ZHIPUAI_API_KEY` | GLM free tier API key | — |
 | `VOYAGE_API_KEY` | Voyage AI embedding key | — |
-| `OPENAI_API_KEY` | OpenAI key (if MODEL_TYPE=OPENAI) | — |
+| `OPENAI_API_KEY` | OpenAI key (if MODEL_TYPE=OPENAI); also the auth key for both `configs/model_config.json` roles (reviewer + judge) when MODEL_TYPE=LITELLM or a caller uses `create_for_role()` | — |
 | `ANTHROPIC_API_KEY` | Anthropic key (if MODEL_TYPE=ANTHROPIC) | — |
+
+`MODEL_TYPE=LITELLM` routes the whole pipeline through `configs/model_config.json`'s `"reviewer"` entry — an OpenAI-SDK-compatible LiteLLM gateway (custom `base_url`, `OPENAI_API_KEY` for auth). The `"judge"` entry in that same file is independent of `MODEL_TYPE`: `LLMClientFactory.create_for_role("judge")` always reads it directly, so the eval suite's Tier 3 judge (`tests/eval/judge.py`) can use a model different from whatever the pipeline under test is running — see `core.config.JUDGE_MODEL`.
 
 Copy `.env.example` to `.env` and fill in your keys. Never commit `.env`.
 
@@ -139,6 +143,7 @@ Copy `.env.example` to `.env` and fill in your keys. Never commit `.env`.
 6. **Content-hash cache key** — `md5(content) + md5(rules) + model_tag`. Changing rule text correctly invalidates the cache. Never bypass the cache without a reason.
 7. **Parser → Analyzer dependency direction** — parsers in `stage1_ingestion/parsers/` must not import from `stage1_ingestion/analyzers/`. Analyzers are higher-level.
 8. **New coding rules** — add to a `.md` file under `stage2_standards/rules/`. If the rule can be detected without an LLM, also add a `MechanicalRule` subclass in `stage1_ingestion/rule_checker.py`.
+9. **`CodeChunk.chunk_id` must stay deterministic** — `CodeChunk.new()` derives it via `uuid.uuid5()` from `(repo_name, file_path, chunk_type, symbol_name, start_line)`, never from content or `uuid.uuid4()`. It's the join key for Qdrant's incremental upsert, the parse cache, and the summary cache — reverting to a random ID silently breaks all three across separate runs of the same repo. Never change the hash inputs or the fixed namespace constant without a migration plan (it would reassign every chunk_id in the Qdrant collection at once).
 
 ---
 
@@ -161,4 +166,6 @@ No other files need changing.
 - **Importing `ReviewState` from `orchestration/state.py` for type hints is fine**; importing the pipeline from a tool is not.
 - **Do not set `_WORKER_THREADS` above 3** for GLM free tier — rate limit is 50 req/min including retries.
 - **Clearing the review cache** (`workspace/review_cache/`) is necessary after changing `max_tokens` or the rules text, as old empty-`[]` entries from a too-low `max_tokens` run will be served as hits.
-- **`workspace/` is gitignored** — cloned repos, reports, and Qdrant storage live there; never commit them.
+- **Clearing `workspace/parse_cache/`** is necessary after changing any parser or chunker logic (new tree-sitter grammar, an `SBR`/`SymbolBoundaryResolver` fix, a changed size threshold, etc.) — the cache's content-hash check only catches "same path, changed content," not "same content, changed parsing logic."
+- **Recreating the `repo_chunks` Qdrant collection** (`QdrantTool(...).ensure_collection(recreate=True)`) is necessary after changing `stage1_ingestion/rule_checker.py` — `CodeChunk.content_hash` is `md5(content)` only, so an unchanged chunk's stored `violations` payload won't refresh on its own after a rule-checker change.
+- **`workspace/` is gitignored** — cloned repos, reports, Qdrant storage, and the `parse_cache/`/`summary_cache/`/`review_cache/`/`comment_cache/` caches all live there; never commit them.

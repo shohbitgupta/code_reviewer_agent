@@ -28,11 +28,16 @@ layout = ws.setup()
 layout.run_id         # str — "20260312_153042_abc123"
 layout.run_dir        # Path — workspace/runs/{run_id}/
 layout.raw_dir        # Path — symlink → repos/{repo_name}
-layout.parsed_dir     # Path — workspace/runs/{run_id}/parsed/
 layout.chunks_dir     # Path — workspace/runs/{run_id}/chunks/
 layout.graphs_dir     # Path — workspace/runs/{run_id}/graphs/
 layout.reports_dir    # Path — workspace/runs/{run_id}/reports/
 ```
+
+Note: the parse-result cache is NOT part of `WorkspaceLayout` — it lives at the
+repo-scoped, run-independent `workspace/parse_cache/{repo_name}/` (see
+`stage1_ingestion/file_parser.py`), since it needs to persist across separate
+pipeline invocations, unlike everything else here which is deliberately
+per-run.
 
 ---
 
@@ -42,10 +47,12 @@ layout.reports_dir    # Path — workspace/runs/{run_id}/reports/
 workspace/
   repos/
     {repo_name}/                  ← cloned repo (Step 1a output — already exists)
+  parse_cache/
+    {repo_name}/                  ← ParsedFile JSON cache (Step 1f) — repo-scoped,
+                                     persists across runs (see file_parser.py)
   runs/
     {run_id}/
       raw/                        ← symlink → ../../repos/{repo_name}
-      parsed/                     ← ParsedFile JSON outputs (Step 1f writes here)
       chunks/
         chunks.jsonl              ← one CodeChunk JSON per line (Step 1g writes)
       graphs/
@@ -101,7 +108,6 @@ class WorkspaceLayout:
     run_id:      str
     run_dir:     Path
     raw_dir:     Path    # symlink to cloned repo
-    parsed_dir:  Path
     chunks_dir:  Path
     graphs_dir:  Path
     reports_dir: Path
@@ -141,7 +147,6 @@ if not raw_dir.exists():
 
 - [ ] `layout.run_dir.exists()` is True
 - [ ] `layout.raw_dir.is_symlink()` is True and resolves to cloned repo
-- [ ] `layout.parsed_dir.exists()` is True (empty at this step)
 - [ ] `layout.chunks_dir.exists()` is True (empty at this step)
 - [ ] `layout.graphs_dir.exists()` is True (empty at this step)
 - [ ] `layout.reports_dir.exists()` is True (empty at this step)

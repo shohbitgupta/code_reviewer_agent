@@ -1,0 +1,11 @@
+{
+  "description": "A bare except clause silently swallowing everything including SystemExit/KeyboardInterrupt — PY002, no mechanical equivalent.",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "unknown",
+  "must_find": [
+    {"rule_id": "PY002"}
+  ],
+  "must_not_find": [],
+  "expected_evidence_terms": []
+}

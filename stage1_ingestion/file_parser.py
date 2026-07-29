@@ -15,8 +15,9 @@ No changes to FileParser itself — open/closed principle.
 
 Usage:
     parser      = FileParser()
-    parsed_file = parser.parse(file_meta, cache_dir=layout.parsed_dir)
-    results     = parser.parse_many(file_metas, cache_dir=layout.parsed_dir)
+    cache_dir   = Path(config.WORKSPACE_ROOT) / "parse_cache" / repo_name
+    parsed_file = parser.parse(file_meta, cache_dir=cache_dir)
+    results     = parser.parse_many(file_metas, cache_dir=cache_dir)
 """
 
 import json
@@ -92,7 +93,7 @@ class FileParser:
     This class owns only:
       - File reading (raw_lines)
       - Parser lookup (REGISTRY)
-      - Parse-result caching (workspace/runs/{run_id}/parsed/)
+      - Parse-result caching (workspace/parse_cache/{repo_name}/)
       - Aggregate logging
 
     All language logic lives in ingestion/parsers/{language}_parser.py.
@@ -109,7 +110,7 @@ class FileParser:
 
         Args:
             file_meta:  FileMeta from Step 1e.
-            cache_dir:  workspace/runs/{run_id}/parsed/ for caching.
+            cache_dir:  workspace/parse_cache/{repo_name}/ for caching.
 
         Returns:
             ParsedFile — raw_lines always populated; symbols=[] on failure.
@@ -188,7 +189,7 @@ class FileParser:
 
         Args:
             file_metas:  FileMeta objects from Step 1e.
-            cache_dir:   workspace/runs/{run_id}/parsed/ for caching.
+            cache_dir:   workspace/parse_cache/{repo_name}/ for caching.
             max_workers: Thread count.  None = auto-size (recommended).
                          Set to 1 to force serial execution.
 
@@ -223,17 +224,34 @@ def _cache_path(file_meta: FileMeta, cache_dir: Path) -> Path:
     return cache_dir / f"{digest}.json"
 
 
+def _content_hash(raw_lines: List[str]) -> str:
+    """MD5 of the file's joined lines — same join convention used to build the parse source."""
+    import hashlib
+    return hashlib.md5("\n".join(raw_lines).encode()).hexdigest()
+
+
 def _load_cache(
     file_meta: FileMeta,
     cache_dir: Path,
     raw_lines: List[str],
 ) -> Optional[ParsedFile]:
-    """Return the cached ParsedFile for file_meta, or None on a cache miss or a corrupt cache entry."""
+    """
+    Return the cached ParsedFile for file_meta, or None on a cache miss, a corrupt
+    cache entry, or stale content.
+
+    The cache is keyed by absolute file path (see _cache_path), which stays stable
+    across separate pipeline runs — so a cache hit is only trusted if the stored
+    content_hash still matches the file's current content. Without this check, a
+    persistent cache would silently serve stale symbols for any file that changed
+    on disk since it was cached.
+    """
     path = _cache_path(file_meta, cache_dir)
     if not path.exists():
         return None
     try:
-        data    = json.loads(path.read_text())
+        data = json.loads(path.read_text())
+        if data.get("content_hash") != _content_hash(raw_lines):
+            return None
         symbols = [ParsedSymbol(**s) for s in data["symbols"]]
         return ParsedFile(
             file_meta     = file_meta,
@@ -252,7 +270,9 @@ def _save_cache(result: ParsedFile, cache_dir: Optional[Path]) -> None:
         return
     path = _cache_path(result.file_meta, cache_dir)
     try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
         payload = {
+            "content_hash":  _content_hash(result.raw_lines),
             "parse_success": result.parse_success,
             "parse_error":   result.parse_error,
             "symbols": [

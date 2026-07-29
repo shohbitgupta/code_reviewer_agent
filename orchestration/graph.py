@@ -48,6 +48,8 @@ class ReviewPipeline:
         skip_summaries: True = skip LLM chunk summaries (Step 1h).
         skip_review:    True = skip Stage 3 LLM review (only pre-flagged issues).
         skip_posting:   True = skip posting comments to GitHub (report only).
+        event_spine:    Optional EventSpine — when given, emits a "stage_start"/
+                        "stage_end" event per stage (see tools/event_spine.py).
     """
 
     def __init__(
@@ -61,6 +63,7 @@ class ReviewPipeline:
         skip_summaries: bool  = False,
         skip_review:  bool    = False,
         skip_posting: bool    = False,
+        event_spine           = None,
     ) -> None:
         self._llm         = llm_client
         self._embed       = embed_tool
@@ -71,6 +74,7 @@ class ReviewPipeline:
         self._skip_sums   = skip_summaries
         self._skip_review = skip_review
         self._skip_post   = skip_posting
+        self._events      = event_spine
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -95,15 +99,23 @@ class ReviewPipeline:
                 break
             t_stage = time.monotonic()
             logger.info("[Pipeline] ▶ %s", name)
+            if self._events is not None:
+                self._events.record("stage_start", stage=name)
             try:
                 state = fn(state)
             except Exception as exc:
                 logger.exception("[Pipeline] ✗ %s failed: %s", name, exc)
                 state["error"] = f"{name}: {exc}"
+                if self._events is not None:
+                    self._events.record("stage_end", stage=name, ok=False, error=str(exc),
+                                         duration_ms=(time.monotonic() - t_stage) * 1000)
                 break
+            duration_ms = (time.monotonic() - t_stage) * 1000
             logger.info(
                 "[Pipeline] ✓ %s  (%.1fs)", name, time.monotonic() - t_stage
             )
+            if self._events is not None:
+                self._events.record("stage_end", stage=name, ok=True, duration_ms=duration_ms)
 
         logger.info(
             "[Pipeline] Finished in %.1fs — %s",

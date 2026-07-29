@@ -7,7 +7,8 @@ making a judgment:
   1. Nav pointer expansion   — parent class, prev/next sibling (O(1), chunk_map)
   2. Dependency context      — direct callees from the dep graph (NetworkX, in-memory)
   3. Hybrid retrieval        — similar chunks via RRF(BM25 + Qdrant dense)
-  4. Pre-computed arch issues— cycles / layer violations that touch this chunk
+  4. Pre-computed arch issues— ARCH001-004 (cycles / layer violations / orphans /
+                               high coupling) that touch this chunk
 
 Context is deliberately bounded so prompt size stays predictable:
   - Parent class head : max 10 lines
@@ -179,17 +180,34 @@ class ContextBuilder:
         return similar
 
     def _build_arch_issues(self, chunk: CodeChunk) -> List[Dict]:
-        """Return pre-computed ARCH violations that involve this chunk's file."""
+        """Return pre-computed ARCH001-004 violations that involve this chunk."""
         issues: List[Dict] = []
         try:
-            # Layer violations where this file is the caller
+            # ARCH002 — layer violations where this file is the caller
             for v in self._dep_graph._violations:
                 if v.get("from_file") == chunk.file_path:
                     issues.append(v)
-            # Cycles that contain this chunk_id
+            # ARCH001 — cycles that contain this chunk_id
             for cycle in self._dep_graph._cycles[:10]:  # cap to avoid huge prompts
                 if chunk.chunk_id in cycle:
                     issues.append({"type": "ARCH001_cycle", "cycle": cycle})
+            # ARCH003 — this chunk itself is an orphan (zero incoming edges)
+            for orphan in self._dep_graph._orphans:
+                if orphan.get("chunk_id") == chunk.chunk_id:
+                    issues.append({
+                        "type":        "ARCH003_orphan",
+                        "symbol_name": orphan.get("symbol_name", chunk.symbol_name),
+                    })
+                    break
+            # ARCH004 — this chunk has high out-degree (God function/class)
+            for coupled in self._dep_graph._high_coupling:
+                if coupled.get("chunk_id") == chunk.chunk_id:
+                    issues.append({
+                        "type":        "ARCH004_high_coupling",
+                        "symbol_name": coupled.get("symbol_name", chunk.symbol_name),
+                        "out_degree":  coupled.get("out_degree"),
+                    })
+                    break
         except Exception:
             pass
         return issues
@@ -224,8 +242,19 @@ def format_context_for_prompt(ctx: ReviewContext) -> str:
     if ctx.arch_issues:
         arch_lines = []
         for issue in ctx.arch_issues:
-            if issue.get("type") == "ARCH001_cycle":
+            itype = issue.get("type")
+            if itype == "ARCH001_cycle":
                 arch_lines.append(f"  ARCH001 (cycle): {' → '.join(issue.get('cycle', []))}")
+            elif itype == "ARCH003_orphan":
+                arch_lines.append(
+                    f"  ARCH003 (orphan): {issue.get('symbol_name')} has no callers "
+                    f"anywhere in this repo — likely dead code"
+                )
+            elif itype == "ARCH004_high_coupling":
+                arch_lines.append(
+                    f"  ARCH004 (high coupling): {issue.get('symbol_name')} calls out to "
+                    f"{issue.get('out_degree')} other symbols — God function/class candidate"
+                )
             else:
                 arch_lines.append(f"  ARCH002 (layer): {issue.get('description', issue)}")
         parts.append("KNOWN ARCHITECTURAL ISSUES (pre-computed — confirm and elaborate):\n"

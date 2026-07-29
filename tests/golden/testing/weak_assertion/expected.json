@@ -1,0 +1,11 @@
+{
+  "description": "A test that calls the function under test but never asserts on its return value — TEST002.",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "unknown",
+  "must_find": [
+    {"rule_id": "TEST002"}
+  ],
+  "must_not_find": [],
+  "expected_evidence_terms": []
+}

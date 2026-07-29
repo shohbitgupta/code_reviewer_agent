@@ -1,0 +1,13 @@
+{
+  "description": "Validated input, parameterized query, no logging of sensitive data — a precision check that the LLM doesn't over-trigger on code that merely looks similar to the security cases.",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "data",
+  "must_find": [],
+  "must_not_find": [
+    {"rule_id": "SEC002"},
+    {"rule_id": "SEC003"},
+    {"rule_id": "SEC004"}
+  ],
+  "expected_evidence_terms": []
+}

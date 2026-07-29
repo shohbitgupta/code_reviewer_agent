@@ -182,7 +182,7 @@ with open(output, "a") as f:
 | Parent lookup without file scope | Filter `c.file_path == chunk.file_path` always |
 | Skipping nav pointers on BLOCK / IMPORT chunks | ALL chunk types need `prev_chunk_id` / `next_chunk_id` |
 | Missing overlap offset in gap-fill window | Gap fills need `offset = gap_start - 1` |
-| Reusing `chunk_id` values | Each chunk gets a fresh `uuid.uuid4()` |
+| Reusing `chunk_id` values across DIFFERENT chunks | `CodeChunk.new()` derives a deterministic `uuid.uuid5()` from `(repo_name, file_path, chunk_type, symbol_name, start_line)` — unique within a repo, but stable across re-runs of the same repo (unlike a fresh `uuid.uuid4()` per chunk) |
 | One IMPORT symbol per statement | Group all contiguous imports into ONE symbol |
 | Large function → one huge chunk | Split at 150 lines with 15-line overlap |
 

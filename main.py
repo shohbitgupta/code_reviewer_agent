@@ -176,14 +176,33 @@ def _run_full_review(args, dry: bool) -> None:
         args: Parsed CLI namespace (repo_url, pr, platform, skip_* flags, ...).
         dry: If True, disables the LLM client, Qdrant, and GitHub posting.
     """
+    import uuid as _uuid
+
     from orchestration.graph import ReviewPipeline
     from orchestration.state import make_state
+
+    # Generated up front (rather than left to make_state's own default) so the
+    # event spine / budget ledger and state["run_id"] refer to the same run.
+    run_id = str(_uuid.uuid4())[:8]
+
+    event_spine = None
+    budget_guard = None
+    if not dry:
+        from core import config as _config
+        from tools.event_spine import EventSpine
+        from tools.budget_guard import BudgetGuard
+
+        event_spine = EventSpine(run_id=run_id)
+        budget_guard = BudgetGuard(
+            max_review_cost_usd=_config.MAX_REVIEW_COST_USD,
+            daily_budget_usd=_config.DAILY_BUDGET_USD,
+        )
 
     llm_client = None
     if not dry:
         try:
             from tools.llm_client import LLMClientFactory
-            llm_client = LLMClientFactory.create()
+            llm_client = LLMClientFactory.create(budget_guard=budget_guard, event_spine=event_spine)
             logger.info(
                 "LLM client: provider=%s  model=%s",
                 llm_client.provider, llm_client.model_name,
@@ -202,6 +221,7 @@ def _run_full_review(args, dry: bool) -> None:
         base_sha  = base_sha,
         head_sha  = head_sha,
         platform  = args.platform,
+        run_id    = run_id,
     )
 
     pipeline = ReviewPipeline(
@@ -212,6 +232,7 @@ def _run_full_review(args, dry: bool) -> None:
         skip_summaries = args.skip_summaries or dry,
         skip_review    = args.skip_review    or dry,
         skip_posting   = args.skip_posting   or not args.pr or dry,
+        event_spine    = event_spine,
     )
 
     t0 = time.monotonic()

@@ -11,9 +11,20 @@ Select a backend via the MODEL_TYPE environment variable:
                             model:   gpt-4o  (override with MODEL_NAME)
                             api key: OPENAI_API_KEY  or  LLM_API_KEY
 
-  MODEL_TYPE=ANTHROPIC    → Anthropic Claude Opus 4.8  (default, production)
-  (or unset)                model:   claude-opus-4-8  (override with MODEL_NAME)
+  MODEL_TYPE=ANTHROPIC    → Anthropic Claude Opus 4.8
+                            model:   claude-opus-4-8  (override with MODEL_NAME)
                             api key: ANTHROPIC_API_KEY  or  LLM_API_KEY
+
+  MODEL_TYPE=LITELLM      → configs/model_config.json's "reviewer" entry, via
+  (default, or unset)       an OpenAI-SDK-compatible LiteLLM gateway.
+                            model:   configs/model_config.json → reviewer.model
+                            api key: OPENAI_API_KEY  or  LLM_API_KEY
+                            base_url: configs/model_config.json → reviewer.base_url
+
+configs/model_config.json also defines a "judge" role, used independently of
+MODEL_TYPE by LLMClientFactory.create_for_role("judge") (see
+tests/eval/judge.py's Tier 3) — an eval judge needs a model independent of
+whichever one the main pipeline run under test is using.
 
 Optional overrides:
   MODEL_NAME=<id>         Override the default model ID for the selected provider.
@@ -44,8 +55,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+from core import config
+from tools.pricing import estimate_cost
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +83,17 @@ _DEFAULTS = {
         "key_env":  "ANTHROPIC_API_KEY",
     },
 }
+
+
+def _normalize_openai_base_url(url: str) -> str:
+    """
+    The OpenAI SDK appends "/chat/completions" itself inside
+    client.chat.completions.create() — strip a literal trailing
+    "/chat/completions" from a configs/model_config.json base_url (which
+    documents the actual endpoint being hit) before handing it to the SDK's
+    base_url param, or requests would double up on the path.
+    """
+    return re.sub(r"/chat/completions/?$", "", url.strip()).rstrip("/")
 
 # ── Anthropic-compatible response objects ─────────────────────────────────────
 # These mirror the Anthropic SDK's response shape so existing code that does
@@ -93,6 +120,9 @@ class _UnifiedResponse:
     content:     List       # List[_TextBlock | _ToolUseBlock]
     model:       str = ""
     stop_reason: str = "end_turn"
+    # Normalized across backends regardless of the provider's own field names
+    # (Anthropic: input_tokens/output_tokens; OpenAI: prompt_tokens/completion_tokens).
+    usage: Optional[Dict[str, int]] = None
 
 
 # ── Schema translation helpers ────────────────────────────────────────────────
@@ -128,6 +158,17 @@ def _to_openai_tool_choice(anthropic_tc: Optional[Dict]) -> Optional[Any]:
     return None
 
 
+def _extract_usage(raw_usage: Any, prompt_key: str, completion_key: str) -> Optional[Dict[str, int]]:
+    """Normalize a provider's usage object into {"prompt_tokens", "completion_tokens"}."""
+    if raw_usage is None:
+        return None
+    prompt = getattr(raw_usage, prompt_key, None)
+    completion = getattr(raw_usage, completion_key, None)
+    if prompt is None and completion is None:
+        return None
+    return {"prompt_tokens": prompt or 0, "completion_tokens": completion or 0}
+
+
 def _openai_to_unified(response: Any, model: str) -> _UnifiedResponse:
     """Convert an OpenAI ChatCompletion → _UnifiedResponse."""
     message = response.choices[0].message
@@ -143,7 +184,24 @@ def _openai_to_unified(response: Any, model: str) -> _UnifiedResponse:
             args = {}
         blocks.append(_ToolUseBlock(name=tc.function.name, input=args))
 
-    return _UnifiedResponse(content=blocks, model=model)
+    usage = _extract_usage(getattr(response, "usage", None), "prompt_tokens", "completion_tokens")
+    return _UnifiedResponse(content=blocks, model=model, usage=usage)
+
+
+def _anthropic_to_unified(response: Any, model: str) -> _UnifiedResponse:
+    """Wrap a raw Anthropic SDK response → _UnifiedResponse.
+
+    `response.content` already duck-types as List[_TextBlock | _ToolUseBlock]
+    (both expose .type/.text/.name/.input), so callers that do
+    `resp.content[0].text` or check `block.type == "tool_use"` are unaffected.
+    """
+    usage = _extract_usage(getattr(response, "usage", None), "input_tokens", "output_tokens")
+    return _UnifiedResponse(
+        content=response.content,
+        model=getattr(response, "model", model) or model,
+        stop_reason=getattr(response, "stop_reason", None) or "end_turn",
+        usage=usage,
+    )
 
 
 # ── Sync message namespaces ───────────────────────────────────────────────────
@@ -177,21 +235,25 @@ class _AnthropicSyncMessages:
             tool_choice: Optional tool_choice directive (Anthropic format).
 
         Returns:
-            The raw anthropic SDK response object.
+            _UnifiedResponse wrapping the raw Anthropic SDK response (see
+            _anthropic_to_unified — content stays duck-type compatible with
+            the raw response, so existing callers are unaffected).
         """
+        m = model or self._model
         kwargs_extra = {}
         if tools:
             kwargs_extra["tools"] = tools
         if tool_choice:
             kwargs_extra["tool_choice"] = tool_choice
-        return self._raw.messages.create(
-            model      = model or self._model,
+        raw_resp = self._raw.messages.create(
+            model      = m,
             max_tokens = max_tokens,
             system     = system,
             messages   = messages or [],
             **kwargs_extra,
             **kwargs,
         )
+        return _anthropic_to_unified(raw_resp, m)
 
 
 class _OpenAISyncMessages:
@@ -283,21 +345,24 @@ class _AnthropicAsyncMessages:
             tool_choice: Optional tool_choice directive (Anthropic format).
 
         Returns:
-            The raw anthropic SDK response object.
+            _UnifiedResponse wrapping the raw Anthropic SDK response (see
+            _anthropic_to_unified).
         """
+        m = model or self._model
         kwargs_extra = {}
         if tools:
             kwargs_extra["tools"] = tools
         if tool_choice:
             kwargs_extra["tool_choice"] = tool_choice
-        return await self._raw.messages.create(
-            model      = model or self._model,
+        raw_resp = await self._raw.messages.create(
+            model      = m,
             max_tokens = max_tokens,
             system     = system,
             messages   = messages or [],
             **kwargs_extra,
             **kwargs,
         )
+        return _anthropic_to_unified(raw_resp, m)
 
 
 class _OpenAIAsyncMessages:
@@ -350,6 +415,73 @@ class _OpenAIAsyncMessages:
         return _openai_to_unified(response, m)
 
 
+# ── Cost/event instrumentation wrappers ────────────────────────────────────────
+# Wrap whatever messages namespace a backend produced so every call — sync or
+# async, Anthropic or OpenAI-shaped — passes through the same pre-flight budget
+# check and post-call cost/event recording exactly once, regardless of which of
+# the 3 call sites (stage1 summaries, stage3 review, stage4 comment polish)
+# triggered it. Both budget_guard and event_spine are optional and duck-typed
+# (only .check_before_call()/.record_call()/.record() are ever called on them)
+# so this module never needs to import tools.budget_guard/tools.event_spine.
+
+class _InstrumentedSyncMessages:
+    """Decorates a sync messages namespace with budget-guard + event-spine hooks."""
+
+    def __init__(self, inner, model: str, budget_guard: Any = None, event_spine: Any = None) -> None:
+        self._inner = inner
+        self._model = model
+        self._budget_guard = budget_guard
+        self._event_spine = event_spine
+
+    def create(self, model=None, max_tokens=1024, **kwargs):
+        m = model or self._model
+        if self._budget_guard is not None:
+            self._budget_guard.check_before_call()
+        t0 = time.monotonic()
+        resp = self._inner.create(model=model, max_tokens=max_tokens, **kwargs)
+        duration_ms = (time.monotonic() - t0) * 1000
+        usage = getattr(resp, "usage", None)
+        cost_usd = 0.0
+        if usage is not None:
+            cost_usd = estimate_cost(m, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+            if self._budget_guard is not None:
+                self._budget_guard.record_call(m, usage, cost_usd)
+        if self._event_spine is not None:
+            self._event_spine.record(
+                "llm_call", model=m, usage=usage, cost_usd=cost_usd, duration_ms=duration_ms,
+            )
+        return resp
+
+
+class _InstrumentedAsyncMessages:
+    """Async counterpart of _InstrumentedSyncMessages."""
+
+    def __init__(self, inner, model: str, budget_guard: Any = None, event_spine: Any = None) -> None:
+        self._inner = inner
+        self._model = model
+        self._budget_guard = budget_guard
+        self._event_spine = event_spine
+
+    async def create(self, model=None, max_tokens=1024, **kwargs):
+        m = model or self._model
+        if self._budget_guard is not None:
+            self._budget_guard.check_before_call()
+        t0 = time.monotonic()
+        resp = await self._inner.create(model=model, max_tokens=max_tokens, **kwargs)
+        duration_ms = (time.monotonic() - t0) * 1000
+        usage = getattr(resp, "usage", None)
+        cost_usd = 0.0
+        if usage is not None:
+            cost_usd = estimate_cost(m, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+            if self._budget_guard is not None:
+                self._budget_guard.record_call(m, usage, cost_usd)
+        if self._event_spine is not None:
+            self._event_spine.record(
+                "llm_call", model=m, usage=usage, cost_usd=cost_usd, duration_ms=duration_ms,
+            )
+        return resp
+
+
 # ── Public client wrappers ────────────────────────────────────────────────────
 
 class UnifiedLLMClient:
@@ -398,7 +530,29 @@ class LLMClientFactory:
     @staticmethod
     def _resolve() -> tuple:
         """Return (provider_key, model_id, api_key, base_url)."""
-        model_type = os.getenv("MODEL_TYPE", "ANTHROPIC").upper().strip()
+        model_type = os.getenv("MODEL_TYPE", "LITELLM").upper().strip()
+
+        if model_type == "LITELLM":
+            cfg = config.MODEL_CONFIG.get("reviewer")
+            if cfg is None:
+                logger.warning(
+                    "[LLMClientFactory] MODEL_TYPE=LITELLM but configs/model_config.json "
+                    "has no 'reviewer' entry — falling back to ANTHROPIC"
+                )
+                model_type = "ANTHROPIC"
+            else:
+                model_id = os.getenv("MODEL_NAME", "").strip() or cfg["model"]
+                api_key = (
+                    os.getenv("OPENAI_API_KEY", "").strip()
+                    or os.getenv("LLM_API_KEY", "").strip()
+                    or None
+                )
+                base_url = (
+                    os.getenv("LLM_BASE_URL", "").strip()
+                    or _normalize_openai_base_url(cfg["base_url"])
+                )
+                return model_type, model_id, api_key, base_url
+
         if model_type not in _DEFAULTS:
             logger.warning(
                 "[LLMClientFactory] Unknown MODEL_TYPE=%r — falling back to ANTHROPIC",
@@ -421,11 +575,17 @@ class LLMClientFactory:
         return model_type, model_id, api_key, base_url
 
     @classmethod
-    def create(cls) -> UnifiedLLMClient:
+    def create(cls, budget_guard: Any = None, event_spine: Any = None) -> UnifiedLLMClient:
         """
         Build and return a sync unified client.
 
         Used by:  main.py · stage3_review · stage4_comments
+
+        Args:
+            budget_guard: Optional object exposing .check_before_call()/.record_call()
+                — when given, every messages.create() call is metered against it.
+            event_spine: Optional object exposing .record(event_type, **fields) —
+                when given, every call emits an "llm_call" event.
         """
         model_type, model_id, api_key, base_url = cls._resolve()
         logger.info(
@@ -451,14 +611,19 @@ class LLMClientFactory:
             raw = openai.OpenAI(**kw)
             ns  = _OpenAISyncMessages(raw, model_id)
 
+        if budget_guard is not None or event_spine is not None:
+            ns = _InstrumentedSyncMessages(ns, model_id, budget_guard=budget_guard, event_spine=event_spine)
+
         return UnifiedLLMClient(ns, provider=model_type.lower(), model=model_id)
 
     @classmethod
-    def create_async(cls) -> AsyncUnifiedLLMClient:
+    def create_async(cls, budget_guard: Any = None, event_spine: Any = None) -> AsyncUnifiedLLMClient:
         """
         Build and return an async unified client.
 
         Used by:  stage1_ingestion/summary_generator.py
+
+        Args: see create() — same optional budget_guard/event_spine hooks.
         """
         model_type, model_id, api_key, base_url = cls._resolve()
         logger.info(
@@ -481,4 +646,51 @@ class LLMClientFactory:
             raw = openai.AsyncOpenAI(**kw)
             ns  = _OpenAIAsyncMessages(raw, model_id)
 
+        if budget_guard is not None or event_spine is not None:
+            ns = _InstrumentedAsyncMessages(ns, model_id, budget_guard=budget_guard, event_spine=event_spine)
+
         return AsyncUnifiedLLMClient(ns, provider=model_type.lower(), model=model_id)
+
+    @classmethod
+    def create_for_role(cls, role: str, budget_guard: Any = None, event_spine: Any = None) -> UnifiedLLMClient:
+        """
+        Build a sync client for one configs/model_config.json role
+        ("reviewer" or "judge"), independent of MODEL_TYPE. Both roles are
+        OpenAI-SDK-shaped LiteLLM gateway deployments — always the OpenAI
+        branch, never Anthropic.
+
+        stage3_review picks up the "reviewer" role automatically via
+        create() when MODEL_TYPE=LITELLM (see _resolve()). This method is
+        for callers that need one specific role's model regardless of the
+        run's MODEL_TYPE — e.g. tests/eval/judge.py's Tier 3 judge, which
+        must stay independent of whichever model the pipeline under test
+        is using.
+        """
+        cfg = config.MODEL_CONFIG.get(role)
+        if cfg is None:
+            raise ValueError(
+                f"No {role!r} entry in configs/model_config.json — "
+                f"available roles: {sorted(config.MODEL_CONFIG)}"
+            )
+
+        model_id = cfg["model"]
+        api_key = (
+            os.getenv("OPENAI_API_KEY", "").strip()
+            or os.getenv("LLM_API_KEY", "").strip()
+            or None
+        )
+        base_url = _normalize_openai_base_url(cfg["base_url"])
+
+        logger.info(
+            "[LLMClientFactory] Role client — role=%s model=%s base_url=%s",
+            role, model_id, base_url,
+        )
+
+        import openai
+        raw = openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
+        ns  = _OpenAISyncMessages(raw, model_id)
+
+        if budget_guard is not None or event_spine is not None:
+            ns = _InstrumentedSyncMessages(ns, model_id, budget_guard=budget_guard, event_spine=event_spine)
+
+        return UnifiedLLMClient(ns, provider="openai_compat", model=model_id)

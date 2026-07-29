@@ -1,0 +1,13 @@
+{
+  "description": "A class doing four unrelated jobs (persistence, notification, export, presentation) — CP001 Single Responsibility Principle violation. Deliberately below the 10-method mechanical God Class threshold (CP012) so it can only be caught by LLM judgment.",
+  "language": "python",
+  "chunk_type": "class",
+  "layer": "domain",
+  "must_find": [
+    {"rule_id": "CP001"}
+  ],
+  "must_not_find": [
+    {"rule_id": "CP012"}
+  ],
+  "expected_evidence_terms": []
+}

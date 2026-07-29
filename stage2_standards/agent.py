@@ -38,7 +38,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -443,6 +443,7 @@ def build_review_prompt_rules(
     standards: List[Rule],
     language: str,
     max_rules: int = 30,
+    categories: Optional[Set[str]] = None,
 ) -> str:
     """
     Return a formatted rules block for injection into an LLM review prompt.
@@ -451,14 +452,21 @@ def build_review_prompt_rules(
     Includes bad/good examples for HIGH and CRITICAL rules.
 
     Args:
-        standards: Full list of Rule objects from state["standards"].
-        language:  Language of the chunk being reviewed.
-        max_rules: Cap the number of rules injected (keeps prompt size bounded).
+        standards:  Full list of Rule objects from state["standards"].
+        language:   Language of the chunk being reviewed.
+        max_rules:  Cap the number of rules injected (keeps prompt size bounded).
+        categories: If given, only rules whose category is in this set are
+                    included — narrows what's checked for this chunk without
+                    changing how many LLM calls happen. None (default) preserves
+                    today's language-only filtering for any caller not yet
+                    category-aware.
 
     Returns:
         Multi-line string ready to embed in a prompt.
     """
     relevant = StandardsLoader.for_language(standards, language)
+    if categories is not None:
+        relevant = [r for r in relevant if r.category in categories]
 
     # Sort: CRITICAL → HIGH → MEDIUM → LOW → INFO
     _order = {Severity.CRITICAL: 0, Severity.HIGH: 1, Severity.MEDIUM: 2,

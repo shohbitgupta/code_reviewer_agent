@@ -10,10 +10,12 @@ Directory layout produced by setup():
     workspace/
       repos/
         {repo_name}/              ← cloned repo (Step 1a — already exists)
+      parse_cache/
+        {repo_name}/              ← ParsedFile JSON cache (Step 1f) — repo-scoped,
+                                     persists across runs (see file_parser.py)
       runs/
         {run_id}/
           raw/                    ← symlink → ../../repos/{repo_name}
-          parsed/                 ← ParsedFile JSON cache (Step 1f)
           chunks/
             chunks.jsonl          ← one CodeChunk per line (Step 1g)
           graphs/
@@ -82,7 +84,6 @@ class WorkspaceManager:
             run_id      = run_id,
             run_dir     = run_dir,
             raw_dir     = run_dir / "raw",
-            parsed_dir  = run_dir / "parsed",
             chunks_dir  = run_dir / "chunks",
             graphs_dir  = run_dir / "graphs",
             reports_dir = run_dir / "reports",
@@ -90,7 +91,6 @@ class WorkspaceManager:
 
         # Create all subdirectories
         for d in (
-            layout.parsed_dir,
             layout.chunks_dir,
             layout.graphs_dir,
             layout.reports_dir,

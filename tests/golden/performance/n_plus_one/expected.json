@@ -1,0 +1,11 @@
+{
+  "description": "One DB round trip per loop iteration instead of a single batched query — PERF001 (N+1), a newly-authored category with no mechanical equivalent.",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "data",
+  "must_find": [
+    {"rule_id": "PERF001"}
+  ],
+  "must_not_find": [],
+  "expected_evidence_terms": []
+}

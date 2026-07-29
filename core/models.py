@@ -33,7 +33,6 @@ class WorkspaceLayout:
     run_id:      str
     run_dir:     Path
     raw_dir:     Path    # symlink → cloned repo
-    parsed_dir:  Path    # ParsedFile JSON cache (Step 1f)
     chunks_dir:  Path    # chunks.jsonl (Step 1g)
     graphs_dir:  Path    # dependency_graph.json (Step 1j)
     reports_dir: Path    # review outputs (Stage 5)
@@ -154,6 +153,29 @@ class ChunkType(str, Enum):
     BLOCK      = "block"       # Layer 3 — sliding window fallback
 
 
+# Fixed once, generated arbitrarily — never change this value. Changing it would
+# silently reassign every chunk_id ever produced, breaking the entire point of
+# cross-run stability (existing Qdrant points, caches, etc. would all orphan at once).
+_CHUNK_ID_NAMESPACE = uuid.UUID("3fce2cb4-697d-488a-a9ac-8e4916aeb3f7")
+
+
+def _stable_chunk_id(
+    repo_name: str,
+    file_path: str,
+    chunk_type: "ChunkType",
+    symbol_name: str,
+    start_line: int,
+) -> str:
+    """Deterministic, UUID-shaped chunk_id — same inputs always produce the same ID.
+
+    Qdrant point IDs must be a valid UUID or unsigned integer, so a plain hash
+    digest won't do — uuid.uuid5 is deterministic (RFC 4122 name-based, SHA-1)
+    and always produces the canonical UUID form.
+    """
+    key = "\x1f".join([repo_name, file_path, chunk_type.value, symbol_name, str(start_line)])
+    return str(uuid.uuid5(_CHUNK_ID_NAMESPACE, key))
+
+
 @dataclass
 class CodeChunk:
     """
@@ -219,9 +241,21 @@ class CodeChunk:
         content: str,
         parent_symbol: Optional[str] = None,
     ) -> "CodeChunk":
-        """Factory: create a CodeChunk with a fresh UUID."""
+        """
+        Factory: create a CodeChunk with a deterministic chunk_id.
+
+        chunk_id is derived from (repo_name, file_path, chunk_type, symbol_name,
+        start_line) — NOT from content — so re-chunking the same repo state (a
+        fresh clone, a re-run, a new PR against the same commit) always produces
+        the same chunk_id for "the same" chunk. This is what makes the Qdrant
+        incremental-upsert check at Step 1k (which keys off chunk_id) actually
+        work across separate pipeline invocations, not just within one run.
+        content_hash (separately) is what answers "did it change" — content is
+        deliberately excluded from chunk_id itself so an edit doesn't mint a new,
+        orphaned ID for what is still logically the same chunk.
+        """
         return CodeChunk(
-            chunk_id=str(uuid.uuid4()),
+            chunk_id=_stable_chunk_id(repo_name, file_path, chunk_type, symbol_name, start_line),
             repo_name=repo_name,
             file_path=file_path,
             language=language,
@@ -415,6 +449,9 @@ class ReviewIssue:
     is_pre_flagged: bool  = False   # True = MechanicalRuleChecker caught this (no LLM)
     confidence:     float = 1.0    # 0.0–1.0; LLM self-reported certainty
     layer:          str   = "unknown"  # chunk's architectural layer
+    agent_type:     str   = "general"  # reviewing specialist role, e.g. "security"|"architecture"
+    evidence:       List[str]  = field(default_factory=list)  # symbol/dependency names the finding cites
+    corroborated_by: List[str] = field(default_factory=list)  # other agent_types that independently agreed
 
     @staticmethod
     def new(
@@ -432,6 +469,8 @@ class ReviewIssue:
         is_pre_flagged: bool  = False,
         confidence:     float = 1.0,
         layer:          str   = "unknown",
+        agent_type:     str   = "general",
+        evidence:       Optional[List[str]] = None,
     ) -> "ReviewIssue":
         """Factory: create a ReviewIssue with a fresh UUID for issue_id."""
         return ReviewIssue(
@@ -450,6 +489,8 @@ class ReviewIssue:
             is_pre_flagged = is_pre_flagged,
             confidence     = confidence,
             layer          = layer,
+            agent_type     = agent_type,
+            evidence       = evidence if evidence is not None else [],
         )
 
     def to_dict(self) -> dict:
@@ -470,6 +511,9 @@ class ReviewIssue:
             "is_pre_flagged": self.is_pre_flagged,
             "confidence":     self.confidence,
             "layer":          self.layer,
+            "agent_type":     self.agent_type,
+            "evidence":       self.evidence,
+            "corroborated_by": self.corroborated_by,
         }
 
     @classmethod

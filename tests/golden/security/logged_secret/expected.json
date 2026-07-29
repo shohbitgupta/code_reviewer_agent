@@ -1,0 +1,11 @@
+{
+  "description": "Logging a raw password at INFO level — no mechanical equivalent exists (SEC003 relies entirely on the LLM pass).",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "domain",
+  "must_find": [
+    {"rule_id": "SEC003"}
+  ],
+  "must_not_find": [],
+  "expected_evidence_terms": []
+}

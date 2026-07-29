@@ -1,0 +1,8 @@
+{
+  "description": "An unexplained threshold in a comparison must be caught mechanically by GEN002.",
+  "language": "python",
+  "chunk_type": "function",
+  "must_find": [
+    {"rule_id": "GEN002", "severity": "LOW"}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "description": "Explicit imports, specific exception handling with logging — precision check against over-triggering PY002/PY004 on correctly-written code.",
+  "language": "python",
+  "chunk_type": "block",
+  "layer": "unknown",
+  "must_find": [],
+  "must_not_find": [
+    {"rule_id": "PY002"},
+    {"rule_id": "PY004"}
+  ],
+  "expected_evidence_terms": []
+}

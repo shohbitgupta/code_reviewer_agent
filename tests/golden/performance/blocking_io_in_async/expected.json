@@ -1,0 +1,11 @@
+{
+  "description": "A synchronous, blocking file read inside an async request handler — blocks the event loop for every other in-flight request. PERF002.",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "domain",
+  "must_find": [
+    {"rule_id": "PERF002"}
+  ],
+  "must_not_find": [],
+  "expected_evidence_terms": []
+}
