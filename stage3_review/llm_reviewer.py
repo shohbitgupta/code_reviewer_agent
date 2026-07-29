@@ -79,6 +79,17 @@ REPORT_ISSUES_TOOL: Dict[str, Any] = {
                             "maximum": 1.0,
                         },
                         "category": {"type": "string"},
+                        "evidence": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Symbol or dependency names this finding relies on that "
+                                "were shown in the provided context (e.g. a callee's name, "
+                                "a similar-pattern chunk's symbol, an architectural-issue "
+                                "reference). Omit or leave empty for self-contained findings "
+                                "that don't depend on anything outside the reviewed code."
+                            ),
+                        },
                     },
                 },
             }
@@ -172,6 +183,7 @@ class LLMReviewer:
         chunk:         CodeChunk,
         rule_ids:      List[str],
         model:         str = "",
+        role:          str = "general",
     ) -> tuple:
         """
         Review one chunk.  Returns (raw_issue_dicts, was_cached).
@@ -179,12 +191,18 @@ class LLMReviewer:
         Args:
             model: Override the instance model for this call (O1 tiering).
                    Empty string = use the instance default (self._model).
+            role:  Reviewing specialist role (e.g. "security", "architecture").
+                   Folded into the cache key so different specialists reviewing
+                   the same chunk don't collide on — or reuse — each other's
+                   cached results. Defaults to "general" (today's single-role
+                   reviewer); only becomes meaningful once more than one role
+                   calls review() on the same chunk.
 
         Thread-safe: multiple WorkerPool threads can call this concurrently.
         The semaphore limits actual API concurrency; the cache is lock-guarded.
         """
         effective_model = model or self._model
-        cache_key = self._make_cache_key(chunk, rule_ids, effective_model)
+        cache_key = self._make_cache_key(chunk, rule_ids, effective_model, role)
 
         cached = self._load_cache(cache_key)
         if cached is not None:
@@ -298,20 +316,22 @@ class LLMReviewer:
     # ── Private: content-hash cache ───────────────────────────────────────────
 
     @staticmethod
-    def _make_cache_key(chunk: CodeChunk, rule_ids: List[str], model: str = "") -> str:
+    def _make_cache_key(chunk: CodeChunk, rule_ids: List[str], model: str = "", role: str = "general") -> str:
         """
-        Stable cache key = md5(chunk content) + md5(sorted rule_ids) + model tag.
+        Stable cache key = md5(chunk content) + md5(sorted rule_ids) + model tag + role.
 
         Content-based: if the source changes, the key changes.
         Rules-based:   if standards are updated, old entries are bypassed.
         Model-based:   fast vs full model results are stored separately (O1).
+        Role-based:    different specialists reviewing the same chunk get
+                       distinct cache entries rather than colliding.
         """
         content_hash = hashlib.md5(chunk.content.encode()).hexdigest()
         rules_hash   = hashlib.md5(
             ",".join(sorted(rule_ids)).encode()
         ).hexdigest()[:8]
         model_tag    = model.split("/")[-1][:12] if model else ""
-        return f"{content_hash}_{rules_hash}_{model_tag}"
+        return f"{content_hash}_{rules_hash}_{model_tag}_{role}"
 
     def _cache_path(self, key: str) -> Optional[Path]:
         """Return the pickle path for *key*, or None if caching is disabled."""

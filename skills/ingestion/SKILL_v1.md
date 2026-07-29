@@ -269,7 +269,9 @@ class FileMeta:
 @dataclass
 class CodeChunk:
     # Core identity
-    chunk_id:       str          # uuid4 — Qdrant point ID
+    chunk_id:       str          # deterministic uuid5(repo_name, file_path, chunk_type,
+                                  #   symbol_name, start_line) — Qdrant point ID, stable
+                                  #   across runs of the same repo (must stay UUID-shaped)
     repo_name:      str
     file_path:      str          # relative from repo root
     language:       str

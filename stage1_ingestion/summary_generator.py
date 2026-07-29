@@ -13,9 +13,14 @@ Cost reduction strategy:
   - Batch 20 chunks per LLM call  (20× cost reduction vs 1 chunk/call)
   - asyncio.Semaphore(5)          (max 5 concurrent LLM calls)
   - Skip MODULE / IMPORT / CONSTANT chunks entirely
+  - content_hash-keyed local cache (workspace/summary_cache/) — an unchanged
+    chunk's summary is reused instead of re-calling the LLM on the next run
 
 Usage (sync entry point for pipeline):
-    generator = SummaryGenerator(llm_client=anthropic_client, embed_tool=embed_tool)
+    generator = SummaryGenerator(
+        llm_client=anthropic_client, embed_tool=embed_tool,
+        cache_dir=Path("./workspace/summary_cache"),
+    )
     chunks    = generator.run(chunks)   # mutates chunks in-place
 """
 
@@ -23,6 +28,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import List, Optional
 
 from core.models import ChunkType, CodeChunk
@@ -54,6 +60,12 @@ class SummaryGenerator:
         llm_client:     anthropic.AsyncAnthropic (or sync Anthropic) client.
                         If None, ANTHROPIC_API_KEY env var is used to create one.
         model:          Claude model ID for summarisation.
+        cache_dir:      If set, persists summaries keyed by content_hash so an
+                        unchanged chunk's summary is reused instead of re-calling
+                        the LLM on the next run (mirrors stage3_review/llm_reviewer.py's
+                        review cache — content-hash keyed, flat, no repo scoping
+                        needed since byte-identical content legitimately shares
+                        a summary across repos).
     """
 
     def __init__(
@@ -61,6 +73,7 @@ class SummaryGenerator:
         embed_tool:  EmbeddingTool,
         llm_client  = None,
         model:       str = "claude-haiku-4-5-20251001",
+        cache_dir:   Optional[Path] = None,
     ):
         self.embed_tool = embed_tool
         # If a unified client is provided, inherit its resolved model name
@@ -71,6 +84,9 @@ class SummaryGenerator:
             else model
         )
         self._client    = llm_client  # lazy-initialised if None
+        self._cache_dir = Path(cache_dir) if cache_dir else None
+        if self._cache_dir:
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -95,13 +111,39 @@ class SummaryGenerator:
                 c.summary           = ""
                 c.summary_embedding = None
 
+        # Cache hits: restore the cached summary text and re-embed it (cheap)
+        # rather than re-calling the LLM. Re-embedding rather than also caching
+        # the vector keeps this correct even if Qdrant's own state doesn't line
+        # up with this cache (e.g. right after a collection reset) — recomputing
+        # a short summary's embedding is a small, local cost next to the LLM call
+        # this is actually trying to avoid.
+        cache_hits: List[CodeChunk] = []
+        for c in chunks:
+            if c.summary is not None:
+                continue  # already marked ineligible above
+            cached = self._load_cached_summary(c.content_hash)
+            if cached:
+                c.summary = cached
+                cache_hits.append(c)
+        if cache_hits:
+            embeddings = self.embed_tool.encode_batch([c.summary for c in cache_hits])
+            for c, emb in zip(cache_hits, embeddings):
+                c.summary_embedding = emb
+            logger.info(
+                "[SummaryGenerator] %d/%d summaries reused from cache",
+                len(cache_hits), len(chunks),
+            )
+
         return asyncio.run(self._run_async(chunks))
 
     # ── Async core ────────────────────────────────────────────────────────────
 
     async def _run_async(self, chunks: List[CodeChunk]) -> List[CodeChunk]:
         """Batch eligible chunks and summarise/embed them concurrently, bounded by SEMAPHORE_LIMIT; failed batches fall back to empty summaries."""
-        eligible  = [c for c in chunks if self._should_summarise(c)]
+        # `c.summary is None` excludes both ineligible chunks (already "") and
+        # cache hits (already restored in run()) — only genuinely new/changed
+        # chunks reach the LLM.
+        eligible  = [c for c in chunks if self._should_summarise(c) and c.summary is None]
         if not eligible:
             return chunks
 
@@ -121,6 +163,7 @@ class SummaryGenerator:
                     for chunk, summary, emb in zip(batch, summaries, embeddings):
                         chunk.summary           = summary
                         chunk.summary_embedding = emb
+                        self._save_cached_summary(chunk.content_hash, summary)
                 except Exception as exc:
                     logger.warning("[SummaryGenerator] Batch failed: %s", exc)
                     for chunk in batch:
@@ -209,3 +252,32 @@ class SummaryGenerator:
         from tools.llm_client import LLMClientFactory
         self._client = LLMClientFactory.create_async()
         return self._client
+
+    # ── Content-hash summary cache ───────────────────────────────────────────
+
+    def _cache_path(self, content_hash: str) -> Optional[Path]:
+        """Return the JSON cache file path for content_hash, or None if caching is disabled."""
+        if self._cache_dir is None:
+            return None
+        return self._cache_dir / f"{content_hash}.json"
+
+    def _load_cached_summary(self, content_hash: str) -> Optional[str]:
+        """Return the cached summary string for content_hash, or None on any miss/read error."""
+        path = self._cache_path(content_hash)
+        if path is None or not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text())
+            return data.get("summary") or None
+        except Exception:
+            return None
+
+    def _save_cached_summary(self, content_hash: str, summary: str) -> None:
+        """Persist summary under content_hash; write failures are logged and swallowed."""
+        path = self._cache_path(content_hash)
+        if path is None:
+            return
+        try:
+            path.write_text(json.dumps({"summary": summary}))
+        except OSError as exc:
+            logger.debug("[SummaryGenerator] Cache write failed: %s", exc)

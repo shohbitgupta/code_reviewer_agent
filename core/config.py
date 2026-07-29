@@ -65,3 +65,9 @@ MAX_REVIEW_CHUNKS  = int(os.getenv("MAX_REVIEW_CHUNKS", "300"))
 
 # ── Workspace ─────────────────────────────────────────────────────────────────
 WORKSPACE_ROOT = "./workspace"
+
+# ── Budget guard ──────────────────────────────────────────────────────────────
+# Hard USD ceilings enforced by tools/budget_guard.py before each LLM call.
+# Set to 0 to disable the corresponding cap entirely.
+MAX_REVIEW_COST_USD = float(os.getenv("MAX_REVIEW_COST_USD", "0"))   # per-run cap
+DAILY_BUDGET_USD    = float(os.getenv("DAILY_BUDGET_USD", "0"))      # rolling 24h cap, all runs combined

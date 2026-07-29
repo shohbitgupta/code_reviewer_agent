@@ -123,7 +123,6 @@ def test_step_1b_workspace():
     _section("Run ID",       layout.run_id)
     _section("run_dir",      layout.run_dir)
     _section("raw_dir",      layout.raw_dir)
-    _section("parsed_dir",   layout.parsed_dir)
     _section("chunks_dir",   layout.chunks_dir)
     _section("graphs_dir",   layout.graphs_dir)
     _section("reports_dir",  layout.reports_dir)
@@ -138,7 +137,6 @@ def test_step_1b_workspace():
     # Assertions
     assert layout.run_dir.is_dir(),                          "run_dir must exist"
     assert layout.raw_dir.is_symlink() or layout.raw_dir.is_dir(), "raw_dir must be symlink or dir"
-    assert layout.parsed_dir.is_dir(),                       "parsed_dir must exist"
     assert layout.chunks_dir.is_dir(),                       "chunks_dir must exist"
     assert layout.graphs_dir.is_dir(),                       "graphs_dir must exist"
     assert layout.reports_dir.is_dir(),                      "reports_dir must exist"
@@ -295,12 +293,14 @@ def test_step_1f_file_parser():
     _banner("STEP 1f — File Parser")
 
     from ingestion.file_parser import FileParser
+    from pathlib import Path as _Path
+    from core import config as _config
 
-    layout       = _STATE["layout"]
+    repo_name    = _STATE["clone_result"].repo_name
     parser       = FileParser()
     parsed_files = parser.parse_many(
         _STATE["file_metas"],
-        cache_dir=layout.parsed_dir,
+        cache_dir=_Path(_config.WORKSPACE_ROOT) / "parse_cache" / repo_name,
     )
     _STATE["parsed_files"] = parsed_files
 

@@ -1,0 +1,8 @@
+{
+  "description": "A hardcoded API key must be caught mechanically by SEC001 before any LLM call.",
+  "language": "python",
+  "chunk_type": "function",
+  "must_find": [
+    {"rule_id": "SEC001", "severity": "CRITICAL"}
+  ]
+}

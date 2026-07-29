@@ -139,6 +139,7 @@ Copy `.env.example` to `.env` and fill in your keys. Never commit `.env`.
 6. **Content-hash cache key** — `md5(content) + md5(rules) + model_tag`. Changing rule text correctly invalidates the cache. Never bypass the cache without a reason.
 7. **Parser → Analyzer dependency direction** — parsers in `stage1_ingestion/parsers/` must not import from `stage1_ingestion/analyzers/`. Analyzers are higher-level.
 8. **New coding rules** — add to a `.md` file under `stage2_standards/rules/`. If the rule can be detected without an LLM, also add a `MechanicalRule` subclass in `stage1_ingestion/rule_checker.py`.
+9. **`CodeChunk.chunk_id` must stay deterministic** — `CodeChunk.new()` derives it via `uuid.uuid5()` from `(repo_name, file_path, chunk_type, symbol_name, start_line)`, never from content or `uuid.uuid4()`. It's the join key for Qdrant's incremental upsert, the parse cache, and the summary cache — reverting to a random ID silently breaks all three across separate runs of the same repo. Never change the hash inputs or the fixed namespace constant without a migration plan (it would reassign every chunk_id in the Qdrant collection at once).
 
 ---
 
@@ -161,4 +162,6 @@ No other files need changing.
 - **Importing `ReviewState` from `orchestration/state.py` for type hints is fine**; importing the pipeline from a tool is not.
 - **Do not set `_WORKER_THREADS` above 3** for GLM free tier — rate limit is 50 req/min including retries.
 - **Clearing the review cache** (`workspace/review_cache/`) is necessary after changing `max_tokens` or the rules text, as old empty-`[]` entries from a too-low `max_tokens` run will be served as hits.
-- **`workspace/` is gitignored** — cloned repos, reports, and Qdrant storage live there; never commit them.
+- **Clearing `workspace/parse_cache/`** is necessary after changing any parser or chunker logic (new tree-sitter grammar, an `SBR`/`SymbolBoundaryResolver` fix, a changed size threshold, etc.) — the cache's content-hash check only catches "same path, changed content," not "same content, changed parsing logic."
+- **Recreating the `repo_chunks` Qdrant collection** (`QdrantTool(...).ensure_collection(recreate=True)`) is necessary after changing `stage1_ingestion/rule_checker.py` — `CodeChunk.content_hash` is `md5(content)` only, so an unchanged chunk's stored `violations` payload won't refresh on its own after a rule-checker change.
+- **`workspace/` is gitignored** — cloned repos, reports, Qdrant storage, and the `parse_cache/`/`summary_cache/`/`review_cache/`/`comment_cache/` caches all live there; never commit them.

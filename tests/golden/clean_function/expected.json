@@ -1,0 +1,6 @@
+{
+  "description": "A trivial, well-formed function must not trigger any mechanical rule — a precision check against false positives.",
+  "language": "python",
+  "chunk_type": "function",
+  "must_find": []
+}
