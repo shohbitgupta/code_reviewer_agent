@@ -1,0 +1,12 @@
+{
+  "description": "The view delegates to an injected service (Application layer) instead of touching persistence directly, and has a single responsibility — a precision check against over-triggering CP006/CP001 on correctly-layered code.",
+  "language": "python",
+  "chunk_type": "class",
+  "layer": "presentation",
+  "must_find": [],
+  "must_not_find": [
+    {"rule_id": "CP006"},
+    {"rule_id": "CP001"}
+  ],
+  "expected_evidence_terms": []
+}

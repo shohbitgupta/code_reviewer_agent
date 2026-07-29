@@ -18,10 +18,8 @@ Run with:
     pytest tests/test_eval_golden.py -s -v
 """
 
-import json
 import sys
 from pathlib import Path
-from typing import Dict, List
 
 import pytest
 
@@ -33,8 +31,7 @@ from stage1_ingestion.rule_checker import MechanicalRuleChecker
 from stage3_review.context_builder import ReviewContext
 from stage3_review.evidence_validator import validate
 from stage3_review.issue_deduplicator import IssueDeduplicator
-
-GOLDEN_DIR = Path(__file__).parent / "golden"
+from tests.eval.dataset import load_case
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -43,31 +40,6 @@ def _banner(title: str) -> None:
     print(f"\n{'═' * 60}")
     print(f"  {title}")
     print("═" * 60)
-
-
-def _load_golden_case(name: str) -> "tuple[CodeChunk, Dict]":
-    """Build a CodeChunk from tests/golden/<name>/input.py, paired with its expected.json."""
-    case_dir = GOLDEN_DIR / name
-    source = (case_dir / "input.py").read_text()
-    expected = json.loads((case_dir / "expected.json").read_text())
-    lines = source.splitlines()
-    chunk = CodeChunk(
-        chunk_id=f"golden-{name}",
-        repo_name="golden-dataset",
-        # Deliberately NOT under tests/golden/... on-disk — that path would
-        # match rule_checker.py's _TEST_PATH_RE (tests/specs/mocks/fixtures
-        # routinely hold placeholder credentials by design) and silently
-        # suppress SEC001. A realistic non-test path exercises the rule the
-        # way it actually runs against real application code.
-        file_path=f"app/golden/{name}.py",
-        language=expected["language"],
-        chunk_type=ChunkType(expected["chunk_type"]),
-        symbol_name=name,
-        start_line=1,
-        end_line=len(lines),
-        content=source,
-    )
-    return chunk, expected
 
 
 def _make_chunk(**overrides) -> CodeChunk:
@@ -95,21 +67,21 @@ def _make_chunk(**overrides) -> CodeChunk:
 def test_golden_mechanical_case(case_name: str):
     """Every golden snippet's mechanical findings must match its expected.json exactly."""
     _banner(f"GOLDEN — {case_name}")
-    chunk, expected = _load_golden_case(case_name)
+    case = load_case(None, case_name)
 
-    violations = MechanicalRuleChecker().check(chunk)
+    violations = MechanicalRuleChecker().check(case.chunk)
     found = [{"rule_id": v.rule_id, "severity": v.severity} for v in violations]
 
-    print(f"  Expected : {expected['must_find']}")
+    print(f"  Expected : {case.must_find}")
     print(f"  Found    : {found}")
 
-    for must in expected["must_find"]:
+    for must in case.must_find:
         assert any(
             f["rule_id"] == must["rule_id"] and f["severity"] == must["severity"]
             for f in found
         ), f"{case_name}: expected to find {must}, got {found}"
 
-    if not expected["must_find"]:
+    if not case.must_find:
         assert not found, f"{case_name}: expected zero violations, got {found}"
 
     print(f"  ✓ {case_name} passed")

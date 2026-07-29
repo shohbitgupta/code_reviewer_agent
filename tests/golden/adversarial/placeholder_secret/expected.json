@@ -1,0 +1,11 @@
+{
+  "description": "False-positive trap: obvious placeholder credentials (already exempted by rule_checker.py's own _PLACEHOLDER_VALUE_RE mechanically) — checks the LLM pass is at least as precise as the mechanical checker it's layered on top of, not more trigger-happy.",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "infrastructure",
+  "must_find": [],
+  "must_not_find": [
+    {"rule_id": "SEC001"}
+  ],
+  "expected_evidence_terms": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": "A public function with real branching/validation business logic and no test visible anywhere in the given context — TEST001, a newly-authored category with no mechanical equivalent.",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "domain",
+  "must_find": [
+    {"rule_id": "TEST001"}
+  ],
+  "must_not_find": [],
+  "expected_evidence_terms": []
+}

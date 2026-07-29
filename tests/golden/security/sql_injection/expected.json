@@ -1,0 +1,11 @@
+{
+  "description": "Raw SQL string concatenation with unsanitized user input (email) — classic SQL injection, no mechanical equivalent exists (SEC002 relies entirely on the LLM pass).",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "data",
+  "must_find": [
+    {"rule_id": "SEC002"}
+  ],
+  "must_not_find": [],
+  "expected_evidence_terms": []
+}

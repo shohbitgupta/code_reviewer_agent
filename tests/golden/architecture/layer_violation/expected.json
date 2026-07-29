@@ -1,0 +1,11 @@
+{
+  "description": "A presentation-layer view class executing a raw DB query directly instead of going through a repository/service layer — CP006 layer-boundary violation, no mechanical equivalent.",
+  "language": "python",
+  "chunk_type": "class",
+  "layer": "presentation",
+  "must_find": [
+    {"rule_id": "CP006"}
+  ],
+  "must_not_find": [],
+  "expected_evidence_terms": []
+}

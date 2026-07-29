@@ -1,0 +1,11 @@
+{
+  "description": "A test with a specific, meaningful assertion on the actual computed result — precision check against over-triggering TEST002 on a well-written test.",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "unknown",
+  "must_find": [],
+  "must_not_find": [
+    {"rule_id": "TEST002"}
+  ],
+  "expected_evidence_terms": []
+}

@@ -138,7 +138,7 @@ Text(AppLocalizations.of(context)!.welcomeBack)
 ### DA007 — Avoid Rebuilding Expensive Widgets
 - **Severity**: MEDIUM
 - **Language**: dart
-- **Category**: complexity
+- **Category**: performance
 - Extract expensive subtrees into separate `StatelessWidget` or `StatefulWidget` classes so Flutter can short-circuit their rebuild. Do not inline them in large `build()` methods.
 - **Bad:**
 ```dart
@@ -201,7 +201,7 @@ Column(
 ### DA010 — Use Lazy Builders for Large or Unbounded Lists
 - **Severity**: MEDIUM
 - **Language**: dart
-- **Category**: complexity
+- **Category**: performance
 - A list of unknown or unbounded size must be rendered with `ListView.builder`/`GridView.builder` (which build items lazily, on demand) rather than eagerly materialising every child up front via `.map(...).toList()` inside a non-lazy `ListView`/`Column`. Eager construction builds and lays out every off-screen item immediately, which does not scale.
 - **Bad:**
 ```dart

@@ -1,0 +1,11 @@
+{
+  "description": "Two wildcard imports polluting the namespace — PY004, no mechanical equivalent. chunk_type is 'block' (a sliding-window chunk mixing imports and usage, as would happen on a small real file).",
+  "language": "python",
+  "chunk_type": "block",
+  "layer": "unknown",
+  "must_find": [
+    {"rule_id": "PY004"}
+  ],
+  "must_not_find": [],
+  "expected_evidence_terms": []
+}

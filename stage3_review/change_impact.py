@@ -17,6 +17,7 @@ is the real implementation of that documented-but-missing behaviour.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional, Set
 
 from core.models import CodeChunk, ReviewIssue
 
@@ -34,6 +35,20 @@ SECURITY_PATHS = frozenset({
     "permission", "role", "access", "secure",
 })
 
+# Rule categories shown to every chunk regardless of risk signals. Security stays
+# here (not gated behind a routing condition) because today every dispatched chunk
+# is already checked against all SEC* rules regardless of file path — only SEC001
+# has a mechanical equivalent, SEC002-004 rely entirely on this LLM pass, so gating
+# security behind e.g. is_security_path would be a real coverage regression.
+BASELINE_RULE_CATEGORIES = frozenset({"security", "style", "complexity", "error_handling"})
+
+# Independent from BLAST_RADIUS_THRESHOLD (50, above which a chunk skips the LLM
+# entirely) — these gate which *extra* rule categories join the baseline for
+# chunks that DO reach the LLM. Reusing 50 here would be dead code, since nothing
+# at or above it ever reaches this check.
+PERFORMANCE_BLAST_RADIUS_THRESHOLD = 10
+TESTING_BLAST_RADIUS_THRESHOLD = 8
+
 
 @dataclass
 class RiskSignals:
@@ -45,6 +60,7 @@ class RiskSignals:
     is_high_coupling:    bool  = False  # ARCH004 — out-degree over threshold
     is_security_path:    bool  = False  # file path matches a security-sensitive pattern
     is_pre_flagged:      bool  = False  # mechanical rule checker already found a violation
+    is_changed:          bool  = False  # chunk is known to be part of the current diff
 
 
 def is_security_path(file_path: str) -> bool:
@@ -70,8 +86,20 @@ def blast_radius(chunk: CodeChunk, dep_graph) -> int:
     return len(ids)
 
 
-def compute_risk_signals(chunk: CodeChunk, dep_graph) -> RiskSignals:
-    """Compute the full RiskSignals profile for *chunk* — no LLM calls, safe to call per-chunk."""
+def compute_risk_signals(
+    chunk: CodeChunk,
+    dep_graph,
+    changed_ids: Optional[Set[str]] = None,
+) -> RiskSignals:
+    """
+    Compute the full RiskSignals profile for *chunk* — no LLM calls, safe to call per-chunk.
+
+    is_changed is deliberately strict: True only when changed_ids is given AND
+    contains this chunk. Unlike stage3_review/agent.py's _select_chunks(), which
+    treats "no diff info" as "everything is changed" for review-priority *ordering*,
+    this answers "do we actually know this chunk is part of a diff" — that should be
+    False, not True, when there's no diff info at all.
+    """
     has_cycle = False
     has_layer_violation = False
     is_orphan = False
@@ -103,7 +131,35 @@ def compute_risk_signals(chunk: CodeChunk, dep_graph) -> RiskSignals:
         is_high_coupling=is_high_coupling,
         is_security_path=is_security_path(chunk.file_path),
         is_pre_flagged=bool(chunk.pre_flagged_violations),
+        is_changed=changed_ids is not None and chunk.chunk_id in changed_ids,
     )
+
+
+def select_rule_categories(risk: RiskSignals, chunk_layer: str) -> Set[str]:
+    """
+    Decide which rule categories apply to one chunk's single review call.
+
+    This is NOT a specialist router — it doesn't change how many LLM calls happen,
+    only which rules are visible in the one call every chunk already gets (matches
+    Alibaba open-code-review's "fine-grained rule matching... keeps the model's
+    attention sharply focused" — narrowing what's checked, not multiplying calls).
+    """
+    categories = set(BASELINE_RULE_CATEGORIES)
+
+    if risk.has_cycle or risk.has_layer_violation or risk.is_high_coupling:
+        categories.add("architecture")
+    # Layer-aware nudge: Clean Architecture / layer-boundary rules matter most for
+    # domain and data-layer code, regardless of whether a graph signal already fired.
+    if chunk_layer in ("domain", "data"):
+        categories.add("architecture")
+
+    if risk.blast_radius >= PERFORMANCE_BLAST_RADIUS_THRESHOLD:
+        categories.add("performance")
+
+    if risk.is_changed and risk.blast_radius >= TESTING_BLAST_RADIUS_THRESHOLD:
+        categories.add("testing")
+
+    return categories
 
 
 def blast_radius_note(chunk: CodeChunk, radius: int) -> ReviewIssue:

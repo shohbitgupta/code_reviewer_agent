@@ -1,0 +1,11 @@
+{
+  "description": "Single batched query instead of one call per loop iteration — precision check against over-triggering PERF001 on already-efficient code.",
+  "language": "python",
+  "chunk_type": "function",
+  "layer": "data",
+  "must_find": [],
+  "must_not_find": [
+    {"rule_id": "PERF001"}
+  ],
+  "expected_evidence_terms": []
+}

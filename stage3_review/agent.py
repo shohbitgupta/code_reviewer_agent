@@ -33,6 +33,14 @@ Key behaviours
    - IssueDeduplicator.deduplicate() removes duplicate (file, line, rule_id)
      triples, preferring pre-flagged issues and higher confidence.
 
+6. Fine-grained rule matching (not a specialist fan-out)
+   - change_impact.select_rule_categories() narrows which rule categories are
+     shown in each chunk's one LLM call, based on that chunk's risk signals
+     and architectural layer — matches Alibaba open-code-review's rule
+     matching philosophy (narrow what's checked, not how many calls happen).
+     Security/style/complexity/error_handling are always included; the LLM
+     call count stays exactly one per chunk either way.
+
 State keys consumed
 ───────────────────
     state["chunks"]             List[CodeChunk]
@@ -65,17 +73,22 @@ from core import config
 from stage2_standards.agent import build_review_prompt_rules, Rule
 from core.models import CodeChunk, ChunkType, ReviewIssue, RuleViolation
 from stage3_review.change_impact import (
+    BASELINE_RULE_CATEGORIES,
     BLAST_RADIUS_THRESHOLD,
     SECURITY_PATHS as _SECURITY_PATHS,
-    blast_radius,
+    RiskSignals,
     blast_radius_note,
+    compute_risk_signals,
     is_security_path,
+    select_rule_categories,
 )
+from stage3_review.bundler import bundle_chunks
 from stage3_review.context_builder import ContextBuilder, format_context_for_prompt
 from stage3_review import evidence_validator
 from stage3_review.issue_deduplicator import IssueDeduplicator, pre_flagged_to_issues
 from stage3_review.llm_reviewer import LLMReviewer
-from stage3_review.prompt_builder import SYSTEM_PROMPT, PromptBuilder
+from stage3_review.prompt_builder import BUNDLE_SYSTEM_ADDENDUM, SYSTEM_PROMPT, PromptBuilder
+from stage3_review.reflection_agent import reflect
 
 logger = logging.getLogger(__name__)
 
@@ -181,22 +194,44 @@ def run_review(
         len(to_review), len(chunks), changed_ids is not None,
     )
 
-    # ── 4b. Blast-radius pre-filter ────────────────────────────────────────────
-    # High-fan-out chunks skip the LLM entirely — a note is cheaper and more
-    # honest than a shallow review of a chunk with 50+ callers/callees.
+    # ── 4b. Risk signals + blast-radius pre-filter ────────────────────────────
+    # Computed once per chunk and reused for both the blast-radius skip below
+    # and rule-category selection in _review_chunk — avoids a duplicate graph
+    # traversal. High-fan-out chunks skip the LLM entirely — a note is cheaper
+    # and more honest than a shallow review of a chunk with 50+ callers/callees.
     to_dispatch: List[CodeChunk] = []
     blast_radius_issues: List[ReviewIssue] = []
+    risk_by_chunk_id: Dict[str, RiskSignals] = {}
     for chunk in to_review:
-        radius = blast_radius(chunk, dep_graph)
-        if radius >= BLAST_RADIUS_THRESHOLD:
-            blast_radius_issues.append(blast_radius_note(chunk, radius))
+        risk = compute_risk_signals(chunk, dep_graph, changed_ids)
+        if risk.blast_radius >= BLAST_RADIUS_THRESHOLD:
+            blast_radius_issues.append(blast_radius_note(chunk, risk.blast_radius))
         else:
             to_dispatch.append(chunk)
+            risk_by_chunk_id[chunk.chunk_id] = risk
 
     if blast_radius_issues:
         logger.info(
             "[ReviewerAgent] %d chunk(s) skipped LLM review — blast radius >= %d",
             len(blast_radius_issues), BLAST_RADIUS_THRESHOLD,
+        )
+
+    # ── 4c. Rule-category selection + file-bundling ───────────────────────────
+    # Bundling groups small, same-file, baseline-only chunks into one LLM call
+    # instead of N — see stage3_review/bundler.py. This is the throughput
+    # lever (fewer total calls against the shared rate limit), not more
+    # concurrent workers; leftover/non-bundleable chunks are still reviewed
+    # individually, one call each, exactly as before.
+    chunks_with_categories = [
+        (chunk, select_rule_categories(risk_by_chunk_id[chunk.chunk_id], chunk.layer))
+        for chunk in to_dispatch
+    ]
+    bundles, individual = bundle_chunks(chunks_with_categories)
+    if bundles:
+        bundled_chunk_count = sum(len(b) for b in bundles)
+        logger.info(
+            "[ReviewerAgent] %d chunk(s) grouped into %d bundle(s) — %d fewer LLM calls",
+            bundled_chunk_count, len(bundles), bundled_chunk_count - len(bundles),
         )
 
     # ── 5. Parallel LLM review ────────────────────────────────────────────────
@@ -209,39 +244,57 @@ def run_review(
     stats_evidence_rejected = 0   # Phase D: findings dropped by evidence_validator
 
     with ThreadPoolExecutor(max_workers=_WORKER_THREADS, thread_name_prefix="review") as pool:
-        future_to_chunk = {
-            pool.submit(
-                _review_chunk,
-                chunk, ctx_builder, prompt_builder, reviewer, standards,
-            ): chunk
-            for chunk in to_dispatch
-        }
+        future_to_task: Dict[Any, List[CodeChunk]] = {}
+        for chunk, categories in individual:
+            future = pool.submit(
+                _review_chunk, chunk, ctx_builder, prompt_builder, reviewer, standards, categories,
+            )
+            future_to_task[future] = [chunk]
+        for bundle in bundles:
+            future = pool.submit(
+                _review_bundle, bundle, ctx_builder, prompt_builder, reviewer, standards,
+            )
+            future_to_task[future] = bundle
 
-        for future in as_completed(future_to_chunk):
-            chunk = future_to_chunk[future]
+        for future in as_completed(future_to_task):
+            task_chunks = future_to_task[future]
+            label = (
+                f"{task_chunks[0].file_path}:{task_chunks[0].symbol_name}"
+                if len(task_chunks) == 1
+                else f"{task_chunks[0].file_path} (bundle of {len(task_chunks)})"
+            )
             try:
                 issues, was_cached, rejected = future.result()
                 llm_issues.extend(issues)
-                stats_reviewed += 1
+                stats_reviewed += len(task_chunks)
                 stats_evidence_rejected += rejected
                 if was_cached:
                     stats_cache_hits += 1
-                # O1: tally model tier usage
-                if _select_model(chunk) == config.FAST_MODEL:
-                    stats_fast_model += 1
+                # O1: tally model tier usage — a bundle uses one model for all
+                # its members, so every member is tallied under that tier.
+                if len(task_chunks) == 1:
+                    bundle_used_review_model = _select_model(task_chunks[0]) != config.FAST_MODEL
                 else:
-                    stats_full_model += 1
+                    bundle_used_review_model = any(
+                        _select_model(c) != config.FAST_MODEL for c in task_chunks
+                    )
+                if bundle_used_review_model:
+                    stats_full_model += len(task_chunks)
+                else:
+                    stats_fast_model += len(task_chunks)
             except Exception as exc:
                 stats_errors += 1
-                logger.error(
-                    "[ReviewerAgent] Review failed for %s:%s — %s",
-                    chunk.file_path, chunk.symbol_name, exc,
-                )
+                logger.error("[ReviewerAgent] Review failed for %s — %s", label, exc)
 
     # ── 6. Merge pre-flagged + blast-radius + LLM issues and deduplicate ────
     all_issues = pre_flagged_issues + blast_radius_issues + llm_issues
     dedup = IssueDeduplicator(min_confidence=0.5)
     final_issues = dedup.deduplicate(all_issues)
+
+    # ── 6b. Reflection — a second, semantic look at the final issue list ────
+    # Matches Alibaba open-code-review's "Comment Reflection" step. Gated
+    # per-file (see reflection_agent._should_reflect) and fail-open on error.
+    final_issues, reflection_stats = reflect(final_issues, llm_client, config.REVIEW_MODEL)
 
     # ── 7. Write state ────────────────────────────────────────────────────────
     elapsed = round(time.monotonic() - t_start, 2)
@@ -259,6 +312,9 @@ def run_review(
         "issues_total":         len(final_issues),
         "model_fast_chunks":    stats_fast_model,   # O1
         "model_full_chunks":    stats_full_model,   # O1
+        "bundles_used":         len(bundles),
+        "chunks_bundled":       sum(len(b) for b in bundles),
+        **reflection_stats,
         "elapsed_seconds":      elapsed,
     }
 
@@ -363,19 +419,27 @@ def _review_chunk(
     prompt_builder: PromptBuilder,
     reviewer:       LLMReviewer,
     standards:      List[Rule],
+    categories:     Optional[Set[str]] = None,
 ) -> tuple[List[ReviewIssue], bool, int]:
     """
     Review a single chunk.  Returns (issues, was_cached, rejected_count).
     Runs inside a ThreadPoolExecutor worker — must be thread-safe.
+
+    categories: rule categories relevant to this chunk (from
+    change_impact.select_rule_categories) — narrows which rules are shown in
+    this one call, it does not change the call count (still one call per
+    chunk, matching Alibaba open-code-review's fine-grained rule matching
+    rather than a per-concern specialist fan-out).
     """
     # Build context
     ctx = ctx_builder.build(chunk)
     context_section = format_context_for_prompt(ctx)
 
-    # Build rules section for this chunk's language
-    rules_section = build_review_prompt_rules(standards, chunk.language)
+    # Build rules section for this chunk's language, narrowed to categories
+    rules_section = build_review_prompt_rules(standards, chunk.language, categories=categories)
     relevant_rule_ids = [
-        r.rule_id for r in standards if r.applies_to(chunk.language)
+        r.rule_id for r in standards
+        if r.applies_to(chunk.language) and (categories is None or r.category in categories)
     ]
 
     # Build user prompt
@@ -430,3 +494,81 @@ def _review_chunk(
         ))
 
     return issues, was_cached, rejected
+
+
+def _review_bundle(
+    chunks:         List[CodeChunk],
+    ctx_builder:    ContextBuilder,
+    prompt_builder: PromptBuilder,
+    reviewer:       LLMReviewer,
+    standards:      List[Rule],
+) -> tuple[List[ReviewIssue], bool, int]:
+    """
+    Review a bundle of several small, same-file, baseline-only chunks in ONE
+    LLM call (see stage3_review/bundler.py). Returns (issues, was_cached,
+    rejected_count) — was_cached is always False; bundle reviews aren't
+    cached across runs this pass (see bundler.py's module docstring).
+    Runs inside a ThreadPoolExecutor worker — must be thread-safe.
+    """
+    contexts = [ctx_builder.build(c) for c in chunks]
+    context_sections = [format_context_for_prompt(ctx) for ctx in contexts]
+
+    baseline = set(BASELINE_RULE_CATEGORIES)
+    rules_section = build_review_prompt_rules(standards, chunks[0].language, categories=baseline)
+    user_prompt = prompt_builder.build_user_bundle(chunks, context_sections, rules_section)
+
+    # If any member independently warrants the full model (pre-flagged or a
+    # security-sensitive path), use it for the whole bundle rather than risk
+    # under-reviewing that one member on the fast tier.
+    model = (
+        config.REVIEW_MODEL
+        if any(_select_model(c) != config.FAST_MODEL for c in chunks)
+        else config.FAST_MODEL
+    )
+
+    raw_issues = reviewer.review_bundle(
+        system_prompt = SYSTEM_PROMPT + BUNDLE_SYSTEM_ADDENDUM,
+        user_prompt   = user_prompt,
+        label         = f"{chunks[0].file_path} (bundle of {len(chunks)})",
+        model         = model,
+    )
+
+    issues: List[ReviewIssue] = []
+    rejected = 0
+    for raw in raw_issues:
+        idx = raw.get("chunk_index")
+        if not isinstance(idx, int) or not (0 <= idx < len(chunks)):
+            rejected += 1
+            logger.debug(
+                "[ReviewerAgent] Rejected bundle finding for %s — invalid chunk_index %r",
+                chunks[0].file_path, idx,
+            )
+            continue
+        chunk = chunks[idx]
+        ctx = contexts[idx]
+        is_valid, reason = evidence_validator.validate(raw, chunk, ctx)
+        if not is_valid:
+            rejected += 1
+            logger.debug(
+                "[ReviewerAgent] Rejected finding for %s:%s — %s",
+                chunk.file_path, chunk.symbol_name, reason,
+            )
+            continue
+        issues.append(ReviewIssue.new(
+            chunk_id    = chunk.chunk_id,
+            rule_id     = raw.get("rule_id", "UNKNOWN"),
+            severity    = raw.get("severity", "INFO"),
+            title       = raw.get("title", ""),
+            description = raw.get("description", ""),
+            file_path   = chunk.file_path,
+            start_line  = raw["line"],
+            end_line    = raw["line"],
+            suggestion  = raw.get("suggestion", ""),
+            language    = chunk.language,
+            category    = raw.get("category", "general"),
+            confidence  = float(raw.get("confidence", 0.7)),
+            layer       = chunk.layer,
+            evidence    = raw.get("evidence") or [],
+        ))
+
+    return issues, False, rejected

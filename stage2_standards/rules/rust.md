@@ -63,7 +63,7 @@ unsafe {
 ### RS004 — Avoid Unnecessary Cloning
 - **Severity**: MEDIUM
 - **Language**: rust
-- **Category**: complexity
+- **Category**: performance
 - Cloning data structures to work around borrow-checker issues often signals a design problem. Prefer references, `Rc`/`Arc`, or restructuring ownership. Does not apply to `Rc::clone`/`Arc::clone` for shared ownership — that clone is a cheap refcount bump and is idiomatic.
 - **Bad:**
 ```rust
