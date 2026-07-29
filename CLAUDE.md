@@ -25,7 +25,7 @@ All stages share a single `ReviewState` TypedDict defined in `orchestration/stat
 
 ```
 core/
-  config.py          — MODEL_TYPE routing (FREE / OPENAI / ANTHROPIC), env var refs
+  config.py          — MODEL_TYPE routing (FREE / OPENAI / ANTHROPIC / LITELLM), env var refs
   models.py          — ALL shared dataclasses (CodeChunk, RuleViolation, ParsedFile, …)
 
 orchestration/
@@ -85,6 +85,8 @@ tools/
 
 configs/
   code_file_type_config.py — extension→language map used by the file filter
+  model_config.json        — "reviewer"/"judge" role model configs for the
+                             LITELLM MODEL_TYPE and LLMClientFactory.create_for_role()
 
 skills/              — living design docs; read the relevant SKILL file before
                        modifying a stage (e.g. skills/ingestion/SKILL_chunking.md)
@@ -95,7 +97,7 @@ skills/              — living design docs; read the relevant SKILL file before
 ## Running
 
 ```bash
-# Full review (requires Qdrant running, MODEL_TYPE=FREE by default)
+# Full review (requires Qdrant running, MODEL_TYPE=LITELLM by default)
 python main.py https://github.com/owner/repo --review
 
 # Skip LLM summaries (faster first run)
@@ -119,11 +121,13 @@ pytest tests/test_pipeline_stages.py -s -v
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `MODEL_TYPE` | `FREE` (GLM), `OPENAI`, or `ANTHROPIC` | `FREE` |
+| `MODEL_TYPE` | `FREE` (GLM), `OPENAI`, `ANTHROPIC`, or `LITELLM` | `LITELLM` |
 | `ZHIPUAI_API_KEY` | GLM free tier API key | — |
 | `VOYAGE_API_KEY` | Voyage AI embedding key | — |
-| `OPENAI_API_KEY` | OpenAI key (if MODEL_TYPE=OPENAI) | — |
+| `OPENAI_API_KEY` | OpenAI key (if MODEL_TYPE=OPENAI); also the auth key for both `configs/model_config.json` roles (reviewer + judge) when MODEL_TYPE=LITELLM or a caller uses `create_for_role()` | — |
 | `ANTHROPIC_API_KEY` | Anthropic key (if MODEL_TYPE=ANTHROPIC) | — |
+
+`MODEL_TYPE=LITELLM` routes the whole pipeline through `configs/model_config.json`'s `"reviewer"` entry — an OpenAI-SDK-compatible LiteLLM gateway (custom `base_url`, `OPENAI_API_KEY` for auth). The `"judge"` entry in that same file is independent of `MODEL_TYPE`: `LLMClientFactory.create_for_role("judge")` always reads it directly, so the eval suite's Tier 3 judge (`tests/eval/judge.py`) can use a model different from whatever the pipeline under test is running — see `core.config.JUDGE_MODEL`.
 
 Copy `.env.example` to `.env` and fill in your keys. Never commit `.env`.
 

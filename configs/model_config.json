@@ -1,0 +1,12 @@
+{
+  "reviewer": {
+    "model": "Claude-sonnet-4-6",
+    "provider": "openai",
+    "base_url": "https://litellm.aks.pemgmtnp.neobank-internal.ae/chat/completions"
+  },
+  "judge": {
+    "model": "internal/qwen3-30b-a3b-instruct",
+    "provider": "openai",
+    "base_url": "https://litellm.aks.pemgmtnp.neobank-internal.ae/chat/completions"
+  }
+}

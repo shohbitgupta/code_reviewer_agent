@@ -1,15 +1,20 @@
 # ── Core ──────────────────────────────────────────────────────────────────────
 gitpython>=3.1
+python-dotenv>=1.0
 
 # ── Embeddings (choose one backend) ──────────────────────────────────────────
 # Default: Voyage AI — best-in-class for code, 200M token free tier
 voyageai>=0.2
 
-# Alternative: OpenAI
-# openai>=1.0
-
 # ── LLM (Step 1h summaries + Stage 3 review) ─────────────────────────────────
+# anthropic — MODEL_TYPE=ANTHROPIC
+# openai    — MODEL_TYPE=OPENAI or LITELLM (default; OpenAI-SDK-compatible gateway)
 anthropic>=0.28
+openai>=1.0
+
+# ── Web UI (webapp/app.py) ────────────────────────────────────────────────────
+fastapi>=0.110
+uvicorn>=0.30
 
 # ── Vector store (Step 1k) ────────────────────────────────────────────────────
 qdrant-client>=1.9

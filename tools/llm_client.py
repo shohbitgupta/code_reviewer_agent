@@ -11,9 +11,20 @@ Select a backend via the MODEL_TYPE environment variable:
                             model:   gpt-4o  (override with MODEL_NAME)
                             api key: OPENAI_API_KEY  or  LLM_API_KEY
 
-  MODEL_TYPE=ANTHROPIC    → Anthropic Claude Opus 4.8  (default, production)
-  (or unset)                model:   claude-opus-4-8  (override with MODEL_NAME)
+  MODEL_TYPE=ANTHROPIC    → Anthropic Claude Opus 4.8
+                            model:   claude-opus-4-8  (override with MODEL_NAME)
                             api key: ANTHROPIC_API_KEY  or  LLM_API_KEY
+
+  MODEL_TYPE=LITELLM      → configs/model_config.json's "reviewer" entry, via
+  (default, or unset)       an OpenAI-SDK-compatible LiteLLM gateway.
+                            model:   configs/model_config.json → reviewer.model
+                            api key: OPENAI_API_KEY  or  LLM_API_KEY
+                            base_url: configs/model_config.json → reviewer.base_url
+
+configs/model_config.json also defines a "judge" role, used independently of
+MODEL_TYPE by LLMClientFactory.create_for_role("judge") (see
+tests/eval/judge.py's Tier 3) — an eval judge needs a model independent of
+whichever one the main pipeline run under test is using.
 
 Optional overrides:
   MODEL_NAME=<id>         Override the default model ID for the selected provider.
@@ -44,10 +55,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from core import config
 from tools.pricing import estimate_cost
 
 logger = logging.getLogger(__name__)
@@ -70,6 +83,17 @@ _DEFAULTS = {
         "key_env":  "ANTHROPIC_API_KEY",
     },
 }
+
+
+def _normalize_openai_base_url(url: str) -> str:
+    """
+    The OpenAI SDK appends "/chat/completions" itself inside
+    client.chat.completions.create() — strip a literal trailing
+    "/chat/completions" from a configs/model_config.json base_url (which
+    documents the actual endpoint being hit) before handing it to the SDK's
+    base_url param, or requests would double up on the path.
+    """
+    return re.sub(r"/chat/completions/?$", "", url.strip()).rstrip("/")
 
 # ── Anthropic-compatible response objects ─────────────────────────────────────
 # These mirror the Anthropic SDK's response shape so existing code that does
@@ -506,7 +530,29 @@ class LLMClientFactory:
     @staticmethod
     def _resolve() -> tuple:
         """Return (provider_key, model_id, api_key, base_url)."""
-        model_type = os.getenv("MODEL_TYPE", "ANTHROPIC").upper().strip()
+        model_type = os.getenv("MODEL_TYPE", "LITELLM").upper().strip()
+
+        if model_type == "LITELLM":
+            cfg = config.MODEL_CONFIG.get("reviewer")
+            if cfg is None:
+                logger.warning(
+                    "[LLMClientFactory] MODEL_TYPE=LITELLM but configs/model_config.json "
+                    "has no 'reviewer' entry — falling back to ANTHROPIC"
+                )
+                model_type = "ANTHROPIC"
+            else:
+                model_id = os.getenv("MODEL_NAME", "").strip() or cfg["model"]
+                api_key = (
+                    os.getenv("OPENAI_API_KEY", "").strip()
+                    or os.getenv("LLM_API_KEY", "").strip()
+                    or None
+                )
+                base_url = (
+                    os.getenv("LLM_BASE_URL", "").strip()
+                    or _normalize_openai_base_url(cfg["base_url"])
+                )
+                return model_type, model_id, api_key, base_url
+
         if model_type not in _DEFAULTS:
             logger.warning(
                 "[LLMClientFactory] Unknown MODEL_TYPE=%r — falling back to ANTHROPIC",
@@ -604,3 +650,47 @@ class LLMClientFactory:
             ns = _InstrumentedAsyncMessages(ns, model_id, budget_guard=budget_guard, event_spine=event_spine)
 
         return AsyncUnifiedLLMClient(ns, provider=model_type.lower(), model=model_id)
+
+    @classmethod
+    def create_for_role(cls, role: str, budget_guard: Any = None, event_spine: Any = None) -> UnifiedLLMClient:
+        """
+        Build a sync client for one configs/model_config.json role
+        ("reviewer" or "judge"), independent of MODEL_TYPE. Both roles are
+        OpenAI-SDK-shaped LiteLLM gateway deployments — always the OpenAI
+        branch, never Anthropic.
+
+        stage3_review picks up the "reviewer" role automatically via
+        create() when MODEL_TYPE=LITELLM (see _resolve()). This method is
+        for callers that need one specific role's model regardless of the
+        run's MODEL_TYPE — e.g. tests/eval/judge.py's Tier 3 judge, which
+        must stay independent of whichever model the pipeline under test
+        is using.
+        """
+        cfg = config.MODEL_CONFIG.get(role)
+        if cfg is None:
+            raise ValueError(
+                f"No {role!r} entry in configs/model_config.json — "
+                f"available roles: {sorted(config.MODEL_CONFIG)}"
+            )
+
+        model_id = cfg["model"]
+        api_key = (
+            os.getenv("OPENAI_API_KEY", "").strip()
+            or os.getenv("LLM_API_KEY", "").strip()
+            or None
+        )
+        base_url = _normalize_openai_base_url(cfg["base_url"])
+
+        logger.info(
+            "[LLMClientFactory] Role client — role=%s model=%s base_url=%s",
+            role, model_id, base_url,
+        )
+
+        import openai
+        raw = openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
+        ns  = _OpenAISyncMessages(raw, model_id)
+
+        if budget_guard is not None or event_spine is not None:
+            ns = _InstrumentedSyncMessages(ns, model_id, budget_guard=budget_guard, event_spine=event_spine)
+
+        return UnifiedLLMClient(ns, provider="openai_compat", model=model_id)

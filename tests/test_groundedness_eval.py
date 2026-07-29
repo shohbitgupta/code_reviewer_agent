@@ -58,6 +58,13 @@ _HAS_API_KEY = bool(
 )
 _needs_llm = pytest.mark.skipif(not _HAS_API_KEY, reason="no LLM API key configured")
 
+# Tier 3 needs both a key AND a configured "judge" role (configs/model_config.json)
+# — an independent model from whatever the pipeline under test is using.
+_needs_judge = pytest.mark.skipif(
+    not _HAS_API_KEY or "judge" not in config.MODEL_CONFIG,
+    reason="no LLM API key, or no 'judge' role in configs/model_config.json",
+)
+
 _CATEGORIES = ["security", "architecture", "performance", "testing", "style"]
 
 # Intentionally lenient starting thresholds for a small, hand-authored golden
@@ -270,7 +277,7 @@ def test_tier2_grounding_audit_catches_generic_evidence_evidence_validator_accep
 #  Tier 3 — LLM-as-judge factual audit
 # ══════════════════════════════════════════════════════════════════════════════
 
-@_needs_llm
+@_needs_judge
 def test_tier3_llm_judge_factual_audit():
     """
     An independent judge rates a real finding and a fabricated one, blind to
@@ -279,11 +286,15 @@ def test_tier3_llm_judge_factual_audit():
     negative control isn't verifying anything — if the judge can't catch an
     obviously false claim about a chunk it's looking straight at, none of its
     other verdicts (used in Tier 4's reflection audit) can be trusted either.
+
+    Uses the "judge" role from configs/model_config.json (via
+    create_for_role) — deliberately independent of whatever MODEL_TYPE the
+    pipeline under test (Tier 1) is running.
     """
     _banner("TIER 3 — LLM-as-judge factual audit")
 
     from tools.llm_client import LLMClientFactory
-    llm_client = LLMClientFactory.create()
+    llm_client = LLMClientFactory.create_for_role("judge")
 
     sql_case = load_case("security", "sql_injection")
 
@@ -306,7 +317,7 @@ def test_tier3_llm_judge_factual_audit():
         ("true_finding", true_finding),
         ("false_finding_negative_control", false_finding),
     ]:
-        verdict = judge_finding(sql_case.chunk.content, finding_text, llm_client, config.REVIEW_MODEL)
+        verdict = judge_finding(sql_case.chunk.content, finding_text, llm_client, config.JUDGE_MODEL)
         verdicts[label] = verdict
         rows.append([label, verdict.get("verdict", ""), verdict.get("reason", "")[:60]])
 
