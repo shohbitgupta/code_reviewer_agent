@@ -103,7 +103,9 @@ class IngestionPipeline:
         Args:
             embed_tool:      EmbeddingTool instance.  Created from config if None.
             qdrant_tool:     QdrantTool instance.  Created from config if None.
-            llm_client:      anthropic.AsyncAnthropic client for Step 1h.
+            llm_client:      AsyncUnifiedLLMClient (from LLMClientFactory.create_async() /
+                             create_summary_async()) for Step 1h. If None, a client
+                             is lazily constructed from config.
             skip_summaries:  Set True to skip Step 1h (no LLM calls).
             skip_qdrant:     Set True to skip Step 1k (no Qdrant upsert).
             max_workers:     Parallel thread count for file-level steps (1f,
@@ -279,6 +281,7 @@ class IngestionPipeline:
             generator = SummaryGenerator(
                 embed_tool = embed_tool,
                 llm_client = llm_client,
+                model      = config.SUMMARY_MODEL,
                 cache_dir  = Path(config.WORKSPACE_ROOT) / "summary_cache",
             )
             chunks = generator.run(chunks)

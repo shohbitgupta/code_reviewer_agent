@@ -40,7 +40,7 @@ stage1_ingestion/
   parsers/           — one parser per language (regex fallback + tree-sitter preferred)
   analyzers/         — language-specific layer classifier + call resolver per language
   rule_checker.py    — mechanical rule checker (GEN001, GEN002, SEC001, PY001,
-                       CP012, CP013, SW008); runs before any LLM call
+                       CP012, CP013, SW008, DA008); runs before any LLM call
   quality_judge.py   — 7 IQ metrics; PROCEED / WARN / ABORT decision
 
 stage2_standards/
@@ -51,7 +51,7 @@ stage2_standards/
     swift.md         — SW001-SW008
     kotlin.md        — KT001-KT008
     python.md        — PY001-PY007
-    dart.md          — DA001-DA007
+    dart.md          — DA001-DA010
     rust.md          — RS001-RS007
 
 stage3_review/
@@ -76,7 +76,11 @@ stage5_report/
 
 tools/
   git_tool.py        — GitExecutor: shallow clone + pull, result schema
-  llm_client.py      — LLMClientFactory: FREE (GLM) / OPENAI / ANTHROPIC backends
+  llm_client.py      — LLMClientFactory: FREE (GLM) / OPENAI / ANTHROPIC / LITELLM backends;
+                       create_for_role() / create_for_role_async() for the reviewer/
+                       summarizer/judge roles in configs/model_config.json, each with
+                       its own model + api_key_env; create_summary_async() picks the
+                       "summarizer" role for Step 1h automatically under MODEL_TYPE=LITELLM
   embedding_tool.py  — EmbeddingTool: Voyage AI or OpenAI backends, batch encode
   qdrant_tool.py     — QdrantTool: dual named vectors (code_vector + summary_vector)
   bm25_tool.py       — BM25Index: hybrid BM25 + vector RRF re-rank
@@ -85,7 +89,8 @@ tools/
 
 configs/
   code_file_type_config.py — extension→language map used by the file filter
-  model_config.json        — "reviewer"/"judge" role model configs for the
+  model_config.json        — "reviewer"/"summarizer"/"judge" role model configs
+                             (model, base_url, api_key_env per role) for the
                              LITELLM MODEL_TYPE and LLMClientFactory.create_for_role()
 
 skills/              — living design docs; read the relevant SKILL file before
@@ -124,10 +129,13 @@ pytest tests/test_pipeline_stages.py -s -v
 | `MODEL_TYPE` | `FREE` (GLM), `OPENAI`, `ANTHROPIC`, or `LITELLM` | `LITELLM` |
 | `ZHIPUAI_API_KEY` | GLM free tier API key | — |
 | `VOYAGE_API_KEY` | Voyage AI embedding key | — |
-| `OPENAI_API_KEY` | OpenAI key (if MODEL_TYPE=OPENAI); also the auth key for both `configs/model_config.json` roles (reviewer + judge) when MODEL_TYPE=LITELLM or a caller uses `create_for_role()` | — |
+| `OPENAI_API_KEY` | OpenAI key (if MODEL_TYPE=OPENAI); also the auth key for the `configs/model_config.json` "judge" role | — |
+| `DEEPSEEK_API_KEY` | Auth key for the `configs/model_config.json` "reviewer" and "summarizer" roles | — |
 | `ANTHROPIC_API_KEY` | Anthropic key (if MODEL_TYPE=ANTHROPIC) | — |
 
-`MODEL_TYPE=LITELLM` routes the whole pipeline through `configs/model_config.json`'s `"reviewer"` entry — an OpenAI-SDK-compatible LiteLLM gateway (custom `base_url`, `OPENAI_API_KEY` for auth). The `"judge"` entry in that same file is independent of `MODEL_TYPE`: `LLMClientFactory.create_for_role("judge")` always reads it directly, so the eval suite's Tier 3 judge (`tests/eval/judge.py`) can use a model different from whatever the pipeline under test is running — see `core.config.JUDGE_MODEL`.
+`MODEL_TYPE=LITELLM` drives Stage 3 review (`configs/model_config.json`'s `"reviewer"` entry → `core.config.REVIEW_MODEL`) and Stage 1h summaries (`"summarizer"` entry → `core.config.SUMMARY_MODEL`, fetched via `LLMClientFactory.create_summary_async()`) — each role has its own model and `api_key_env`, so they can run on entirely different backends. The `"judge"` entry is independent of `MODEL_TYPE`: `LLMClientFactory.create_for_role("judge")` always reads it directly, so the eval suite's Tier 3 judge (`tests/eval/judge.py`) can use a model different from whatever the pipeline under test is running — see `core.config.JUDGE_MODEL`. If the judge's primary call fails, `judge_finding()` falls back once to GLM 5.2 (`LLMClientFactory.create_provider("FREE")`, `ZHIPUAI_API_KEY`) before raising — the returned dict's `model_used` reports whichever model actually produced the verdict, so a fallback firing is never silent.
+
+Step 1h's summary generation runs on an asyncio event loop and needs a genuinely awaitable client — `ReviewPipeline` threads a separate `summary_llm_client` (async) through to it, distinct from the sync `llm_client` Stage 3/4 use. Never pass the sync client into `SummaryGenerator`; its `_call_llm()` does `await client.messages.create(...)`, which only fails loudly once the network call itself would otherwise succeed (a real, previously-latent bug — see `orchestration/graph.py::_run_ingestion`).
 
 Copy `.env.example` to `.env` and fill in your keys. Never commit `.env`.
 

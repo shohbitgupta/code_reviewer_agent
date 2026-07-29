@@ -18,13 +18,19 @@ Select a backend via the MODEL_TYPE environment variable:
   MODEL_TYPE=LITELLM      → configs/model_config.json's "reviewer" entry, via
   (default, or unset)       an OpenAI-SDK-compatible LiteLLM gateway.
                             model:   configs/model_config.json → reviewer.model
-                            api key: OPENAI_API_KEY  or  LLM_API_KEY
+                            api key: role's own api_key_env  or  LLM_API_KEY
                             base_url: configs/model_config.json → reviewer.base_url
 
-configs/model_config.json also defines a "judge" role, used independently of
-MODEL_TYPE by LLMClientFactory.create_for_role("judge") (see
-tests/eval/judge.py's Tier 3) — an eval judge needs a model independent of
-whichever one the main pipeline run under test is using.
+configs/model_config.json also defines "summarizer" and "judge" roles, each
+with its own model and api_key_env — different roles may run on entirely
+different backends (e.g. DeepSeek for reviewer/summarizer, Qwen for judge):
+  - "summarizer" — Stage 1h's chunk summaries. Fetched via
+    LLMClientFactory.create_summary_async(), which picks this role when
+    MODEL_TYPE=LITELLM and falls back to the generic create_async() otherwise.
+  - "judge"      — used independently of MODEL_TYPE by
+    LLMClientFactory.create_for_role("judge") (see tests/eval/judge.py's
+    Tier 3) — an eval judge needs a model independent of whichever one the
+    main pipeline run under test is using.
 
 Optional overrides:
   MODEL_NAME=<id>         Override the default model ID for the selected provider.
@@ -543,7 +549,7 @@ class LLMClientFactory:
             else:
                 model_id = os.getenv("MODEL_NAME", "").strip() or cfg["model"]
                 api_key = (
-                    os.getenv("OPENAI_API_KEY", "").strip()
+                    os.getenv(cfg.get("api_key_env", "OPENAI_API_KEY"), "").strip()
                     or os.getenv("LLM_API_KEY", "").strip()
                     or None
                 )
@@ -573,6 +579,55 @@ class LLMClientFactory:
             or None
         )
         return model_type, model_id, api_key, base_url
+
+    @classmethod
+    def create_provider(cls, provider_key: str, budget_guard: Any = None, event_spine: Any = None) -> UnifiedLLMClient:
+        """
+        Build a sync client for one specific _DEFAULTS provider ("FREE",
+        "OPENAI", or "ANTHROPIC"), bypassing MODEL_TYPE entirely.
+
+        For callers that need a specific alternate backend regardless of the
+        run's configured provider — e.g. tests/eval/judge.py falls back to
+        create_provider("FREE") (GLM 5.2 via ZhipuAI) when the "judge" role's
+        primary model fails, so a single provider's outage doesn't take down
+        Tier 3 judging entirely.
+        """
+        provider_key = provider_key.upper().strip()
+        if provider_key not in _DEFAULTS:
+            raise ValueError(f"Unknown provider {provider_key!r} — choices: {sorted(_DEFAULTS)}")
+
+        defaults = _DEFAULTS[provider_key]
+        model_id = defaults["model"]
+        api_key = (
+            os.getenv(defaults["key_env"], "").strip()
+            or os.getenv("LLM_API_KEY", "").strip()
+            or None
+        )
+        base_url = defaults.get("base_url")
+
+        logger.info(
+            "[LLMClientFactory] Provider client — provider=%s  model=%s",
+            provider_key, model_id,
+        )
+
+        if provider_key == "ANTHROPIC":
+            import anthropic
+            raw = anthropic.Anthropic(api_key=api_key, max_retries=0)
+            ns  = _AnthropicSyncMessages(raw, model_id)
+        else:
+            import openai
+            kw: Dict[str, Any] = {"max_retries": 0}
+            if api_key:
+                kw["api_key"] = api_key
+            if base_url:
+                kw["base_url"] = base_url
+            raw = openai.OpenAI(**kw)
+            ns  = _OpenAISyncMessages(raw, model_id)
+
+        if budget_guard is not None or event_spine is not None:
+            ns = _InstrumentedSyncMessages(ns, model_id, budget_guard=budget_guard, event_spine=event_spine)
+
+        return UnifiedLLMClient(ns, provider=provider_key.lower(), model=model_id)
 
     @classmethod
     def create(cls, budget_guard: Any = None, event_spine: Any = None) -> UnifiedLLMClient:
@@ -675,7 +730,7 @@ class LLMClientFactory:
 
         model_id = cfg["model"]
         api_key = (
-            os.getenv("OPENAI_API_KEY", "").strip()
+            os.getenv(cfg.get("api_key_env", "OPENAI_API_KEY"), "").strip()
             or os.getenv("LLM_API_KEY", "").strip()
             or None
         )
@@ -694,3 +749,61 @@ class LLMClientFactory:
             ns = _InstrumentedSyncMessages(ns, model_id, budget_guard=budget_guard, event_spine=event_spine)
 
         return UnifiedLLMClient(ns, provider="openai_compat", model=model_id)
+
+    @classmethod
+    def create_for_role_async(cls, role: str, budget_guard: Any = None, event_spine: Any = None) -> AsyncUnifiedLLMClient:
+        """
+        Async counterpart of create_for_role() — same role lookup, same
+        per-role api_key_env, always the OpenAI-async branch.
+
+        Used by stage1_ingestion/summary_generator.py (Step 1h) when
+        MODEL_TYPE=LITELLM and configs/model_config.json defines a
+        "summarizer" role — Step 1h's batch summarisation runs on an asyncio
+        event loop, so it needs an awaitable client, not the sync one
+        stage3_review/stage4_comments use.
+        """
+        cfg = config.MODEL_CONFIG.get(role)
+        if cfg is None:
+            raise ValueError(
+                f"No {role!r} entry in configs/model_config.json — "
+                f"available roles: {sorted(config.MODEL_CONFIG)}"
+            )
+
+        model_id = cfg["model"]
+        api_key = (
+            os.getenv(cfg.get("api_key_env", "OPENAI_API_KEY"), "").strip()
+            or os.getenv("LLM_API_KEY", "").strip()
+            or None
+        )
+        base_url = _normalize_openai_base_url(cfg["base_url"])
+
+        logger.info(
+            "[LLMClientFactory] Async role client — role=%s model=%s base_url=%s",
+            role, model_id, base_url,
+        )
+
+        import openai
+        raw = openai.AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)
+        ns  = _OpenAIAsyncMessages(raw, model_id)
+
+        if budget_guard is not None or event_spine is not None:
+            ns = _InstrumentedAsyncMessages(ns, model_id, budget_guard=budget_guard, event_spine=event_spine)
+
+        return AsyncUnifiedLLMClient(ns, provider="openai_compat", model=model_id)
+
+    @classmethod
+    def create_summary_async(cls, budget_guard: Any = None, event_spine: Any = None) -> AsyncUnifiedLLMClient:
+        """
+        Build the async client Step 1h (chunk summaries) should use.
+
+        Under MODEL_TYPE=LITELLM with a "summarizer" role defined, that role
+        is used directly — giving Stage 1h a genuinely different model (and
+        API key) from Stage 3's reviewer, per configs/model_config.json.
+        Otherwise falls back to create_async()'s generic MODEL_TYPE-driven
+        client, matching every other MODEL_TYPE's existing single-model
+        behavior (reviewer/summarizer/comments all share one model).
+        """
+        model_type = os.getenv("MODEL_TYPE", "LITELLM").upper().strip()
+        if model_type == "LITELLM" and "summarizer" in config.MODEL_CONFIG:
+            return cls.create_for_role_async("summarizer", budget_guard=budget_guard, event_spine=event_spine)
+        return cls.create_async(budget_guard=budget_guard, event_spine=event_spine)

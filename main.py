@@ -199,6 +199,7 @@ def _run_full_review(args, dry: bool) -> None:
         )
 
     llm_client = None
+    summary_llm_client = None
     if not dry:
         try:
             from tools.llm_client import LLMClientFactory
@@ -206,6 +207,13 @@ def _run_full_review(args, dry: bool) -> None:
             logger.info(
                 "LLM client: provider=%s  model=%s",
                 llm_client.provider, llm_client.model_name,
+            )
+            summary_llm_client = LLMClientFactory.create_summary_async(
+                budget_guard=budget_guard, event_spine=event_spine
+            )
+            logger.info(
+                "Summary LLM client: provider=%s  model=%s",
+                summary_llm_client.provider, summary_llm_client.model_name,
             )
         except Exception as exc:
             logger.warning("Could not create LLM client (%s) — LLM steps skipped", exc)
@@ -225,14 +233,15 @@ def _run_full_review(args, dry: bool) -> None:
     )
 
     pipeline = ReviewPipeline(
-        llm_client     = llm_client,
-        github_token   = os.getenv("GITHUB_TOKEN", ""),
-        platform       = args.platform,
-        skip_qdrant    = args.skip_qdrant    or dry,
-        skip_summaries = args.skip_summaries or dry,
-        skip_review    = args.skip_review    or dry,
-        skip_posting   = args.skip_posting   or not args.pr or dry,
-        event_spine    = event_spine,
+        llm_client         = llm_client,
+        summary_llm_client = summary_llm_client,
+        github_token       = os.getenv("GITHUB_TOKEN", ""),
+        platform           = args.platform,
+        skip_qdrant        = args.skip_qdrant    or dry,
+        skip_summaries     = args.skip_summaries or dry,
+        skip_review        = args.skip_review    or dry,
+        skip_posting       = args.skip_posting   or not args.pr or dry,
+        event_spine        = event_spine,
     )
 
     t0 = time.monotonic()

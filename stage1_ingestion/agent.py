@@ -57,7 +57,9 @@ def run_ingestion(
         state:          Shared ReviewState dict.
         embed_tool:     EmbeddingTool instance (created from config if None).
         qdrant_tool:    QdrantTool instance (created from config if None).
-        llm_client:     anthropic.AsyncAnthropic client for Step 1h.
+        llm_client:     AsyncUnifiedLLMClient (from LLMClientFactory.create_async() /
+                        create_summary_async()) for Step 1h. If None, a client
+                        is lazily constructed from config.
         skip_summaries: Skip LLM summary generation (Step 1h).
         skip_qdrant:    Skip Qdrant upsert (Step 1k) — useful for dry runs.
 

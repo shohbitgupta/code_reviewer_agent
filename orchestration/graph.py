@@ -40,6 +40,12 @@ class ReviewPipeline:
         llm_client:     UnifiedLLMClient from LLMClientFactory (sync).  Required
                         for Stage 3 (review) and Stage 4 (comment polish).
                         If None, those stages run in template-only mode.
+        summary_llm_client: AsyncUnifiedLLMClient (from LLMClientFactory.create_async()
+                        or create_for_role_async("summarizer")) for Step 1h's batch
+                        summarisation, which runs on an asyncio event loop and needs
+                        an awaitable client — never the sync one above. If None,
+                        stage1_ingestion.summary_generator.SummaryGenerator falls
+                        back to constructing its own async client lazily.
         embed_tool:     EmbeddingTool instance (created from config if None).
         qdrant_tool:    QdrantTool instance (created from config if None).
         github_token:   GitHub personal access token for posting PR comments.
@@ -55,6 +61,7 @@ class ReviewPipeline:
     def __init__(
         self,
         llm_client            = None,
+        summary_llm_client    = None,
         embed_tool            = None,
         qdrant_tool           = None,
         github_token: str     = "",
@@ -66,6 +73,7 @@ class ReviewPipeline:
         event_spine           = None,
     ) -> None:
         self._llm         = llm_client
+        self._summary_llm = summary_llm_client
         self._embed       = embed_tool
         self._qdrant      = qdrant_tool
         self._gh_token    = github_token
@@ -127,13 +135,18 @@ class ReviewPipeline:
     # ── Stage runners ─────────────────────────────────────────────────────────
 
     def _run_ingestion(self, state: Dict) -> Dict:
-        """Delegate to Stage 1 with the tools and skip flags configured on this pipeline."""
+        """
+        Delegate to Stage 1 with the tools and skip flags configured on this
+        pipeline. Step 1h needs an awaitable client — self._llm is sync, so
+        self._summary_llm (or None, letting SummaryGenerator build its own
+        async client) is passed here instead.
+        """
         from stage1_ingestion.agent import run_ingestion
         return run_ingestion(
             state,
             embed_tool     = self._embed,
             qdrant_tool    = self._qdrant,
-            llm_client     = self._llm,
+            llm_client     = self._summary_llm,
             skip_summaries = self._skip_sums,
             skip_qdrant    = self._skip_qdrant,
         )

@@ -7,10 +7,12 @@ Model selection is driven by MODEL_TYPE:
   FREE       → z-ai/glm-5.2-free  (ZhipuAI, OpenAI-compat, free tier)
   OPENAI     → gpt-4o             (OpenAI)
   ANTHROPIC  → claude-opus-4-8
-  LITELLM    → configs/model_config.json's "reviewer" entry, via an
-               OpenAI-SDK-compatible LiteLLM gateway (custom base_url,
-               OPENAI_API_KEY for auth) — see tools/llm_client.py's
-               LLMClientFactory._resolve(). (default, or unset)
+  LITELLM    → configs/model_config.json's "reviewer" entry drives REVIEW_MODEL
+               (Stage 3 review) and its "summarizer" entry drives SUMMARY_MODEL
+               (Stage 1h chunk summaries), both via an OpenAI-SDK-compatible
+               LiteLLM gateway — see tools/llm_client.py's
+               LLMClientFactory._resolve() / create_for_role_async().
+               (default, or unset)
 
 Override the exact model IDs with MODEL_NAME (review) / FAST_MODEL_NAME (fast tier).
 """
@@ -55,9 +57,10 @@ elif _MODEL_TYPE == "OPENAI":
     SUMMARY_MODEL = _MODEL_NAME      or "gpt-4o"
     FAST_MODEL    = _FAST_MODEL_NAME or "gpt-4o-mini"
 elif _MODEL_TYPE == "LITELLM":
-    _reviewer_cfg = MODEL_CONFIG.get("reviewer", {})
+    _reviewer_cfg   = MODEL_CONFIG.get("reviewer", {})
+    _summarizer_cfg = MODEL_CONFIG.get("summarizer", {})
     REVIEW_MODEL  = _MODEL_NAME      or _reviewer_cfg.get("model", "gpt-4o")
-    SUMMARY_MODEL = _MODEL_NAME      or _reviewer_cfg.get("model", "gpt-4o")
+    SUMMARY_MODEL = _MODEL_NAME      or _summarizer_cfg.get("model") or _reviewer_cfg.get("model", "gpt-4o")
     FAST_MODEL    = _FAST_MODEL_NAME or _reviewer_cfg.get("model", "gpt-4o")
 else:  # ANTHROPIC (default)
     REVIEW_MODEL  = _MODEL_NAME      or "claude-opus-4-8"

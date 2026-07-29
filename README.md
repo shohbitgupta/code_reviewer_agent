@@ -65,7 +65,7 @@ This is deliberately **narrow single-pass routing, not a multi-agent fan-out** �
 - **Groundedness eval harness** (`tests/test_groundedness_eval.py`) — a 4-tier suite measuring whether findings are not just grounded but *factually correct*: precision/recall/F1 against a golden dataset, a grounding-integrity audit, an independent LLM-as-judge factual check (with a negative control), and adversarial false-positive traps
 - **Budget guard + event spine** — hard per-run/rolling-daily USD ceilings enforced before every LLM call, plus an append-only JSONL log of every call's cost, tokens, and duration per run
 - **Risk-tiered model selection** — security-sensitive code (auth/crypto/token paths) gets the strongest model; routine code gets a faster one
-- **Provider-agnostic LLM client** — one interface over Anthropic, OpenAI, ZhipuAI GLM (free tier), and any OpenAI-SDK-compatible LiteLLM gateway, with independent `reviewer`/`judge` role model configs (`configs/model_config.json`)
+- **Provider-agnostic LLM client** — one interface over Anthropic, OpenAI, ZhipuAI GLM (free tier), and any OpenAI-SDK-compatible LiteLLM gateway, with independent `reviewer`/`summarizer`/`judge` role model + credential configs (`configs/model_config.json`) — e.g. a stronger model for review, a cheaper/faster one for chunk summaries, and an independent one for eval judging
 - **Budgeted, platform-aware comments** — caps per-file/per-run volume, demotes overflow into a summary instead of dropping it; renders for GitHub, GitLab, Jira, or plain text
 - **Basic web UI** (`webapp/app.py`) — a bare-minimum FastAPI wrapper for ad-hoc testing: paste a repo URL, trigger a review, watch status, open the HTML report
 
@@ -90,7 +90,7 @@ This is deliberately **narrow single-pass routing, not a multi-agent fan-out** �
 |---|---|
 | Language & parsing | Python · stdlib `ast` · tree-sitter (Kotlin, Rust, Dart) · regex parser (Swift) |
 | Search & retrieval | Qdrant (dense vectors) · custom BM25 (lexical) · Reciprocal Rank Fusion · NetworkX (dependency graph) |
-| LLM layer | Anthropic Claude · OpenAI · ZhipuAI GLM (free tier) · any OpenAI-SDK-compatible LiteLLM gateway — via a provider-agnostic client with per-role (reviewer/judge) model config |
+| LLM layer | Anthropic Claude · OpenAI · ZhipuAI GLM (free tier) · any OpenAI-SDK-compatible LiteLLM gateway — via a provider-agnostic client with per-role (reviewer/summarizer/judge) model + credential config |
 | Embeddings | Voyage AI (`voyage-code-3`, default) · OpenAI embeddings (alternative) |
 | Eval / quality | `pytest`-driven golden-dataset harness · LLM-as-judge factual audit · deterministic evidence/grounding checks |
 | Web UI & deploy | FastAPI · Uvicorn · Docker |
@@ -120,7 +120,8 @@ Create a `.env` file in the project root (loaded automatically):
 |---|---|---|
 | `MODEL_TYPE` | `LITELLM` \| `FREE` \| `OPENAI` \| `ANTHROPIC` | `LITELLM` |
 | `MODEL_NAME` / `FAST_MODEL_NAME` | Override the review / fast-tier model ID | provider default |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `ZHIPUAI_API_KEY` | Provider credentials — `OPENAI_API_KEY` also authenticates both `configs/model_config.json` roles under `MODEL_TYPE=LITELLM` | — |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `ZHIPUAI_API_KEY` | Provider credentials — `OPENAI_API_KEY` also authenticates the `configs/model_config.json` "judge" role | — |
+| `DEEPSEEK_API_KEY` | Authenticates the `configs/model_config.json` "reviewer" and "summarizer" roles | — |
 | `LLM_API_KEY` | Universal fallback key | — |
 | `LLM_BASE_URL` | Override base URL for OpenAI-compatible endpoints | — |
 | `GITHUB_TOKEN` | Required for private repos and PR comment posting | — |
@@ -130,7 +131,7 @@ Create a `.env` file in the project root (loaded automatically):
 | `MAX_REVIEW_COST_USD` | Hard USD ceiling per review run (`0` = disabled) | `0` |
 | `DAILY_BUDGET_USD` | Rolling 24h USD ceiling across all runs (`0` = disabled) | `0` |
 
-`MODEL_TYPE=LITELLM` routes the pipeline through `configs/model_config.json`'s `"reviewer"` entry — an OpenAI-SDK-compatible gateway (custom `base_url`, `OPENAI_API_KEY` for auth). That same file's `"judge"` entry is independent of `MODEL_TYPE`: the eval harness's Tier 3 judge always uses it directly, so it can run a different model than whichever one the pipeline under test is configured with.
+`MODEL_TYPE=LITELLM` drives Stage 3 review from `configs/model_config.json`'s `"reviewer"` entry and Stage 1h chunk summaries from its `"summarizer"` entry — each role has its own model and API key, so review and summarization can run on entirely different backends (e.g. a stronger/pricier model for review, a faster/cheaper one for summaries). The `"judge"` entry is independent of `MODEL_TYPE`: the eval harness's Tier 3 judge always uses it directly, so it can run a different model than whichever one the pipeline under test is configured with. If that primary judge call fails, it falls back once to GLM 5.2 (ZhipuAI free tier, `ZHIPUAI_API_KEY`) before raising — never silently, since the reported verdict always names which model actually produced it.
 
 ### Usage
 
@@ -197,7 +198,7 @@ webapp/                  Bare-minimum FastAPI UI (repo URL in, HTML report out)
 Dockerfile               Container build for the web UI
 orchestration/           Pipeline runner + shared ReviewState contract
 core/                    Global config, MODEL_TYPE routing, shared dataclasses
-configs/                 model_config.json (reviewer/judge roles) + file-type map
+configs/                 model_config.json (reviewer/summarizer/judge roles) + file-type map
 stage1_ingestion/        Fetch → parse → resolve → chunk (deterministic IDs) → graph → embed → quality gate
 stage2_standards/        Coding-standard rules (rules/*.md) → structured Rule objects
 stage3_review/           Risk-based rule routing, bundling, LLM review, evidence validation, dedup, reflection

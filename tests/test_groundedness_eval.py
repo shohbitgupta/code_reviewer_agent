@@ -319,9 +319,11 @@ def test_tier3_llm_judge_factual_audit():
     ]:
         verdict = judge_finding(sql_case.chunk.content, finding_text, llm_client, config.JUDGE_MODEL)
         verdicts[label] = verdict
-        rows.append([label, verdict.get("verdict", ""), verdict.get("reason", "")[:60]])
+        rows.append([label, verdict.get("verdict", ""), verdict.get("model_used", ""), verdict.get("reason", "")[:60]])
 
-    _table(["case", "verdict", "reason"], rows)
+    _table(["case", "verdict", "model_used", "reason"], rows)
+    if any(v.get("model_used") != config.JUDGE_MODEL for v in verdicts.values()):
+        print(f"  note: fell back off the configured judge model ({config.JUDGE_MODEL}) at least once — see warnings above")
 
     assert verdicts["true_finding"]["verdict"] in ("TRUE", "PARTIALLY_TRUE"), (
         f"judge rated a real, factually-correct finding as "

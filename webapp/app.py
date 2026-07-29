@@ -72,10 +72,16 @@ def _run_pipeline(run_id: str, repo_url: str) -> None:
         )
         llm_client = LLMClientFactory.create(budget_guard=budget_guard, event_spine=event_spine)
         logger.info("[Run %s] LLM client: provider=%s model=%s", run_id, llm_client.provider, llm_client.model_name)
+        summary_llm_client = LLMClientFactory.create_summary_async(budget_guard=budget_guard, event_spine=event_spine)
+        logger.info(
+            "[Run %s] Summary LLM client: provider=%s model=%s",
+            run_id, summary_llm_client.provider, summary_llm_client.model_name,
+        )
 
         state = make_state(repo_url=repo_url, run_id=run_id)
         pipeline = ReviewPipeline(
             llm_client=llm_client,
+            summary_llm_client=summary_llm_client,
             skip_qdrant=True,  # bare-minimum deployment target has no Qdrant instance
             event_spine=event_spine,
         )

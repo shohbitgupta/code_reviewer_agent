@@ -15,11 +15,19 @@ stage3_review/reflection_agent.py's docstring) rather than sharing
 stage3_review/llm_reviewer.py's per-chunk content-hash-cached LLMReviewer —
 a judge verdict must never be cached against the same key a reviewer finding
 used, or the "independent" check stops being independent.
+
+Falls back to GLM 5.2 (ZhipuAI free tier) if the primary judge model's call
+fails — a different backend from whatever configs/model_config.json's
+"judge" role configures, so one provider's outage doesn't take Tier 3 down
+entirely. Only raises if both the primary and the fallback fail.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 _MAX_TOKENS = 500
 
@@ -66,21 +74,8 @@ def _build_prompt(chunk_code: str, finding_description: str) -> str:
     )
 
 
-def judge_finding(
-    chunk_code: str,
-    finding_description: str,
-    llm_client,
-    model: str,
-) -> Dict[str, str]:
-    """
-    Ask an independent judge pass whether *finding_description* is factually
-    true of *chunk_code*. Returns {"verdict": ..., "reason": ...}.
-
-    Raises on API failure rather than failing open — unlike
-    reflection_agent.reflect() (where a broken call must never cause a real
-    finding to silently vanish), a broken judge call must never be silently
-    treated as a TRUE verdict, so the caller decides how to handle it.
-    """
+def _call_judge(llm_client, model: str, chunk_code: str, finding_description: str) -> Dict[str, str]:
+    """One judge tool call against a specific client/model. Raises on API failure."""
     response = llm_client.messages.create(
         model=model,
         max_tokens=_MAX_TOKENS,
@@ -94,5 +89,44 @@ def judge_finding(
             return {
                 "verdict": block.input.get("verdict", "FALSE"),
                 "reason": block.input.get("reason", ""),
+                "model_used": model,
             }
-    return {"verdict": "FALSE", "reason": "no tool_use block in judge response"}
+    return {"verdict": "FALSE", "reason": "no tool_use block in judge response", "model_used": model}
+
+
+def judge_finding(
+    chunk_code: str,
+    finding_description: str,
+    llm_client,
+    model: str,
+) -> Dict[str, str]:
+    """
+    Ask an independent judge pass whether *finding_description* is factually
+    true of *chunk_code*. Returns {"verdict": ..., "reason": ..., "model_used": ...}.
+
+    If the primary call fails, falls back once to GLM 5.2 (ZhipuAI free tier,
+    via LLMClientFactory.create_provider("FREE")) — a different backend from
+    the configured judge model, so a single provider's outage doesn't take
+    Tier 3 down entirely. "model_used" reports whichever model actually
+    produced the verdict, so a fallback firing is never silent.
+
+    Raises only if BOTH the primary and the fallback fail — a broken judge
+    call must never be silently treated as a TRUE verdict, so the caller
+    decides how to handle a total failure.
+    """
+    try:
+        return _call_judge(llm_client, model, chunk_code, finding_description)
+    except Exception as primary_exc:
+        logger.warning(
+            "[Judge] Primary call failed (model=%s): %s — falling back to GLM 5.2",
+            model, primary_exc,
+        )
+        from tools.llm_client import LLMClientFactory
+        fallback_client = LLMClientFactory.create_provider("FREE")
+        try:
+            return _call_judge(fallback_client, fallback_client.model_name, chunk_code, finding_description)
+        except Exception as fallback_exc:
+            raise RuntimeError(
+                f"Judge failed on both the primary model ({model}: {primary_exc}) "
+                f"and the GLM 5.2 fallback ({fallback_exc})"
+            ) from fallback_exc
